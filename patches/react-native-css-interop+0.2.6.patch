@@ -1,0 +1,42 @@
+diff --git a/node_modules/react-native-css-interop/babel.js b/node_modules/react-native-css-interop/babel.js
+index d84e52b..9ac6005 100644
+--- a/node_modules/react-native-css-interop/babel.js
++++ b/node_modules/react-native-css-interop/babel.js
+@@ -1,16 +1,24 @@
+ module.exports = function () {
+-  return {
+-    plugins: [
+-      require("./dist/babel-plugin").default,
+-      [
+-        "@babel/plugin-transform-react-jsx",
+-        {
+-          runtime: "automatic",
+-          importSource: "react-native-css-interop",
+-        },
+-      ],
+-      // Use this plugin in reanimated 4 and later
+-      "react-native-worklets/plugin",
++  const plugins = [
++    require("./dist/babel-plugin").default,
++    [
++      "@babel/plugin-transform-react-jsx",
++      {
++        runtime: "automatic",
++        importSource: "react-native-css-interop",
++      },
+     ],
+-  };
++  ];
++
++  // Only present with reanimated 4+ (react-native-worklets is its own
++  // package there). Upstream references it unconditionally, which breaks
++  // projects still on reanimated 3.x — guard it instead of hard-requiring.
++  try {
++    require.resolve("react-native-worklets/plugin");
++    plugins.push("react-native-worklets/plugin");
++  } catch {
++    // not installed — fine on reanimated 3.x, nothing to do
++  }
++
++  return { plugins };
+ };

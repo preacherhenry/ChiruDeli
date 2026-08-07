@@ -2,7 +2,7 @@
   "name": "@chirudeli/customer-mobile",
   "version": "0.1.0",
   "private": true,
-  "main": "node_modules/expo/AppEntry.js",
+  "main": "index.js",
   "scripts": {
     "start": "expo start",
     "start:tunnel": "expo start --tunnel",
@@ -28,6 +28,7 @@
     "expo-secure-store": "~13.0.2",
     "expo-splash-screen": "~0.27.5",
     "expo-status-bar": "~1.12.1",
+    "expo-updates": "~0.25.28",
     "lucide-react-native": "^0.436.0",
     "nativewind": "^4.0.36",
     "react": "18.2.0",

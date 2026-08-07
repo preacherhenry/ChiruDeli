@@ -8,6 +8,7 @@
     "packages/*"
   ],
   "scripts": {
+    "postinstall": "patch-package",
     "dev:api": "npm run dev --workspace=apps/api",
     "dev:customer": "npm run start --workspace=apps/customer-mobile",
     "dev:rider": "npm run start --workspace=apps/rider-mobile",
@@ -23,6 +24,7 @@
     "@typescript-eslint/parser": "^7.18.0",
     "eslint": "^8.57.0",
     "eslint-config-prettier": "^9.1.0",
+    "patch-package": "^8.0.1",
     "prettier": "^3.3.3",
     "typescript": "^5.5.4"
   },
