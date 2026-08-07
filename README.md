@@ -82,6 +82,38 @@ the Expo web target and simulators. **On a physical phone via Expo Go**,
    delivered) over real Socket.io events — watch the customer app's Live
    Order Tracking screen update in real time.
 
+## Deploying the API (Render)
+
+Running the API and Expo dev server on your own machine means your phone has
+to reach that machine's LAN IP — which breaks the moment either device
+changes network (mobile data, a different WiFi, a hotspot, restrictive
+firewalls). Deploying the API gives it a stable public URL so this stops
+being a factor.
+
+1. Push this repo to GitHub (already done if you're reading this from there).
+2. On [render.com](https://render.com), click **New** → **Blueprint**, connect
+   this repo. Render reads [`render.yaml`](render.yaml) automatically and
+   provisions a free web service (`chirudeli-api`), generating secure random
+   values for the JWT secrets on its own.
+3. Render will ask for one value it can't generate: **`DATABASE_URL`** — paste
+   your Neon pooled connection string (same one from `apps/api/.env`).
+4. Deploy. Render runs `prisma migrate deploy` automatically as part of the
+   build, so your existing Neon database (schema + seeded data) is reused
+   as-is — no separate production database needed for testing.
+5. Once live, your API is at `https://chirudeli-api.onrender.com` (or
+   whatever URL Render assigns — check the dashboard). Point the mobile apps
+   at it by editing `apps/customer-mobile/.env` /
+   `apps/rider-mobile/.env`:
+   ```
+   EXPO_PUBLIC_API_URL=https://chirudeli-api.onrender.com
+   EXPO_PUBLIC_WS_URL=https://chirudeli-api.onrender.com
+   ```
+   Socket.io works transparently over HTTPS, no separate config needed.
+
+Note: Render's free plan spins the service down after 15 minutes of
+inactivity — the first request after a while will take a few extra seconds
+to wake it back up.
+
 ## Project structure
 
 ```

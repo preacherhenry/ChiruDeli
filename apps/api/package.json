@@ -7,12 +7,13 @@
   },
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json --noEmit && node esbuild.config.cjs",
     "start": "node dist/server.js",
     "simulate": "tsx scripts/simulate-order-progress.ts",
     "test": "vitest run",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
+    "prisma:migrate:deploy": "prisma migrate deploy",
     "prisma:seed": "prisma db seed",
     "prisma:studio": "prisma studio"
   },
@@ -32,6 +33,7 @@
     "@types/bcryptjs": "^2.4.6",
     "@types/jsonwebtoken": "^9.0.6",
     "@types/node": "^20.14.15",
+    "esbuild": "^0.23.1",
     "pino-pretty": "^11.2.2",
     "prisma": "^5.18.0",
     "tsx": "^4.16.5",

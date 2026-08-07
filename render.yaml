@@ -1,0 +1,38 @@
+services:
+  - type: web
+    name: chirudeli-api
+    runtime: node
+    plan: free
+    autoDeploy: true
+    buildCommand: >-
+      npm install &&
+      npm run prisma:generate --workspace=apps/api &&
+      npm run prisma:migrate:deploy --workspace=apps/api &&
+      npm run build --workspace=apps/api
+    startCommand: npm run start --workspace=apps/api
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: JWT_ACCESS_TTL
+        value: 15m
+      - key: JWT_REFRESH_TTL
+        value: 30d
+      - key: HOST
+        value: 0.0.0.0
+      - key: NODE_ENV
+        value: production
+      - key: CORS_ORIGIN
+        value: "*"
+      - key: DEFAULT_COMMISSION_PERCENT
+        value: "10"
+      - key: DEFAULT_BASE_DELIVERY_FEE
+        value: "15"
+      - key: DEFAULT_PER_KM_DELIVERY_FEE
+        value: "5"
+      - key: SMS_PROVIDER
+        value: console
