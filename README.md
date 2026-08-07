@@ -148,6 +148,34 @@ future SDK upgrade reintroduces them:
   Patched via `patch-package` (see `patches/`) — reapplied automatically
   on every `npm install` via the root `postinstall` script.
 
+## Building a real APK (EAS Build)
+
+For testing without Expo Go at all — a normal installable Android app:
+
+```bash
+cd apps/customer-mobile
+npx eas-cli build --platform android --profile preview
+```
+
+`eas.json`'s `preview` profile builds a directly-installable `.apk` (not
+the Play Store's `.aab` format) with EAS-managed signing credentials
+(auto-generated on first build, no setup needed). Takes 10-20 minutes;
+finishes with a direct download link.
+
+**Important**: `apps/customer-mobile/.env` is gitignored and never reaches
+EAS's build servers, so `EXPO_PUBLIC_API_URL`/`EXPO_PUBLIC_WS_URL` must be
+set as EAS environment variables instead, or the built app falls back to
+`localhost` (meaningless on a real device) and every request fails with
+"Network request failed":
+
+```bash
+npx eas-cli env:create --name EXPO_PUBLIC_API_URL --value "https://chirudeli-api.onrender.com" --scope project --environment preview --visibility plaintext
+npx eas-cli env:create --name EXPO_PUBLIC_WS_URL --value "https://chirudeli-api.onrender.com" --scope project --environment preview --visibility plaintext
+```
+
+These persist on the EAS project once set — only needed again if the API
+URL changes.
+
 ## Project structure
 
 ```
