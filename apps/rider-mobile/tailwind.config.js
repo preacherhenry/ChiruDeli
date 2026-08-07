@@ -1,0 +1,67 @@
+/**
+ * Mirrors packages/design-tokens/src/colors.ts by hand — see the note in
+ * apps/customer-mobile/tailwind.config.js for why this isn't `require`d
+ * directly from the TS source.
+ */
+
+/** @type {import('tailwindcss').Config} */
+module.exports = {
+  content: ['./App.tsx', './src/**/*.{js,jsx,ts,tsx}'],
+  presets: [require('nativewind/preset')],
+  theme: {
+    extend: {
+      colors: {
+        primary: {
+          50: '#E6F4EE',
+          100: '#C2E5D5',
+          200: '#99D4B9',
+          300: '#6FC29C',
+          400: '#4CAE85',
+          500: '#2E9A70',
+          600: '#0E6E4E',
+          700: '#0B5A40',
+          800: '#094732',
+          900: '#063325',
+        },
+        secondary: {
+          50: '#FFF7E8',
+          100: '#FEEBC0',
+          200: '#FDDC93',
+          300: '#FBCC66',
+          400: '#F8BB45',
+          500: '#F4A425',
+          600: '#DB8B1A',
+          700: '#B26F14',
+          800: '#89540F',
+          900: '#5F3A0A',
+        },
+        neutral: {
+          0: '#FFFFFF',
+          50: '#F7F8F6',
+          100: '#EEF0ED',
+          200: '#DEE1DB',
+          300: '#C3C7BF',
+          400: '#9BA097',
+          500: '#767B72',
+          600: '#5B6169',
+          700: '#454A42',
+          800: '#2E322C',
+          900: '#1F2328',
+        },
+        success: '#0E6E4E',
+        warning: '#DB8B1A',
+        error: '#D64545',
+        info: '#2E7BD6',
+      },
+      fontFamily: {
+        heading: ['Manrope_700Bold'],
+        'heading-extra': ['Manrope_800ExtraBold'],
+        body: ['Inter_400Regular'],
+        'body-medium': ['Inter_500Medium'],
+        'body-semibold': ['Inter_600SemiBold'],
+      },
+      borderRadius: { sm: '8px', md: '12px', lg: '16px', xl: '24px', pill: '9999px' },
+    },
+  },
+  plugins: [],
+};

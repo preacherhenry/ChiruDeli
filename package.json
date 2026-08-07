@@ -1,0 +1,38 @@
+{
+  "name": "chirudeli",
+  "private": true,
+  "version": "0.1.0",
+  "description": "ChiruDeli — Anything You Need. Delivered. Multi-sided delivery platform for Chirundu, Zambia.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev --workspace=apps/api",
+    "dev:customer": "npm run start --workspace=apps/customer-mobile",
+    "dev:rider": "npm run start --workspace=apps/rider-mobile",
+    "dev:business": "npm run dev --workspace=apps/business-web",
+    "dev:admin": "npm run dev --workspace=apps/admin-web",
+    "build": "npm run build --workspaces --if-present",
+    "lint": "eslint . --ext .ts,.tsx",
+    "format": "prettier --write .",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "^3.3.3",
+    "typescript": "^5.5.4"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "overrides": {
+    "react-native": "0.74.5",
+    "@types/react": "~18.2.79",
+    "react": "18.2.0",
+    "react-dom": "18.2.0"
+  }
+}

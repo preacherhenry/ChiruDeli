@@ -1,0 +1,30 @@
+{
+  "expo": {
+    "name": "ChiruDeli",
+    "slug": "chirudeli-customer",
+    "scheme": "chirudeli",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "backgroundColor": "#0E6E4E"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "zm.chirudeli.customer"
+    },
+    "android": {
+      "package": "zm.chirudeli.customer",
+      "adaptiveIcon": {
+        "backgroundColor": "#0E6E4E"
+      }
+    },
+    "web": {
+      "bundler": "metro"
+    },
+    "plugins": ["expo-secure-store", "expo-location"],
+    "extra": {
+      "eas": {}
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "expo": {
+    "name": "ChiruDeli Rider",
+    "slug": "chirudeli-rider",
+    "scheme": "chirudeli-rider",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "backgroundColor": "#0E6E4E"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "zm.chirudeli.rider"
+    },
+    "android": {
+      "package": "zm.chirudeli.rider",
+      "adaptiveIcon": {
+        "backgroundColor": "#0E6E4E"
+      }
+    },
+    "web": {
+      "bundler": "metro"
+    },
+    "plugins": ["expo-secure-store"]
+  }
+}

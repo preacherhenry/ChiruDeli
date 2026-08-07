@@ -1,0 +1,661 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Enums ─────────────────────────────────────────────────────────────────
+// Keep these in lockstep with packages/shared-types/src/enums.ts.
+
+enum UserRole {
+  CUSTOMER
+  BUSINESS_OWNER
+  RIDER
+  ADMIN
+}
+
+enum AccountStatus {
+  ACTIVE
+  SUSPENDED
+  PENDING
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum BusinessStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
+enum StoreState {
+  OPEN
+  PAUSED
+}
+
+enum RiderOnlineStatus {
+  ONLINE
+  OFFLINE
+}
+
+enum VehicleType {
+  BICYCLE
+  MOTORCYCLE
+  CAR
+  ON_FOOT
+}
+
+enum DocumentType {
+  NATIONAL_ID
+  DRIVERS_LICENSE
+  VEHICLE_REGISTRATION
+  PROFILE_PHOTO
+}
+
+enum DocumentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+/// Coarse, customer-facing order lifecycle — drives the tracking screen.
+enum OrderStatus {
+  PENDING_CONFIRMATION
+  CONFIRMED
+  PREPARING
+  READY_FOR_PICKUP
+  RIDER_ASSIGNED
+  PICKED_UP
+  ON_THE_WAY
+  DELIVERED
+  CANCELLED
+}
+
+/// Fine-grained rider-side delivery workflow (spec section 13).
+enum DeliveryStatus {
+  ASSIGNED
+  EN_ROUTE_TO_PICKUP
+  ARRIVED_AT_PICKUP
+  PICKED_UP
+  EN_ROUTE_TO_DROPOFF
+  ARRIVED_AT_DROPOFF
+  COMPLETED
+}
+
+/// Deliberately separate from OrderStatus/DeliveryStatus (business rule #13).
+enum PaymentStatus {
+  UNPAID
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  CASH_ON_DELIVERY
+  MOBILE_MONEY
+  CARD
+}
+
+enum TransactionType {
+  CHARGE
+  REFUND
+  PAYOUT
+}
+
+enum DeliveryFeeType {
+  DISTANCE_BASED
+  FIXED_ZONE
+}
+
+enum PromotionType {
+  PERCENTAGE
+  FIXED_AMOUNT
+  FREE_DELIVERY
+}
+
+enum NotificationType {
+  ORDER_CONFIRMED
+  ORDER_ACCEPTED
+  ORDER_PREPARING
+  RIDER_ASSIGNED
+  RIDER_APPROACHING
+  ORDER_DELIVERED
+  ORDER_CANCELLED
+  PROMOTION
+  NEW_ORDER
+  NEW_DELIVERY_REQUEST
+  DELIVERY_INSTRUCTIONS_UPDATED
+  ACCOUNT_STATUS_CHANGED
+}
+
+enum BusinessCategorySlug {
+  FOOD
+  GROCERIES
+  PHARMACY
+  ELECTRONICS
+  STATIONERY
+  HOUSEHOLD
+  CLOTHING
+  OTHER
+}
+
+// ── Identity & access ────────────────────────────────────────────────────
+
+model User {
+  id           String        @id @default(uuid())
+  role         UserRole
+  phone        String        @unique
+  email        String?       @unique
+  passwordHash String
+  status       AccountStatus @default(ACTIVE)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  lastLoginAt  DateTime?
+
+  customer      Customer?
+  rider         Rider?
+  adminUser     AdminUser?
+  businesses    Business[]     @relation("BusinessOwner")
+  addresses     Address[]
+  notifications Notification[]
+  auditLogs     AuditLog[]     @relation("AuditActor")
+}
+
+model Customer {
+  id              String   @id @default(uuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id])
+  displayName     String
+  profilePhotoUrl String?
+  createdAt       DateTime @default(now())
+
+  orders                Order[]
+  favoriteBusinesses    FavoriteBusiness[]
+  favoriteProducts      FavoriteProduct[]
+  reviews               Review[]
+  promotionRedemptions  PromotionRedemption[]
+}
+
+model Address {
+  id                   String   @id @default(uuid())
+  userId               String
+  user                 User     @relation(fields: [userId], references: [id])
+  label                String
+  line1                String
+  area                 String
+  latitude             Float
+  longitude            Float
+  deliveryInstructions String?
+  isDefault            Boolean  @default(false)
+  createdAt            DateTime @default(now())
+
+  orders Order[]
+
+  @@index([userId])
+}
+
+model AdminUser {
+  id               String  @id @default(uuid())
+  userId           String  @unique
+  user             User    @relation(fields: [userId], references: [id])
+  fullName         String
+  permissionLevel  String  @default("STANDARD")
+  twoFactorSecret  String?
+  twoFactorEnabled Boolean @default(false)
+}
+
+// ── Businesses & catalog ─────────────────────────────────────────────────
+
+model BusinessCategory {
+  id        String               @id @default(uuid())
+  name      String
+  slug      BusinessCategorySlug @unique
+  icon      String
+  sortOrder Int                  @default(0)
+
+  businesses Business[]
+}
+
+model Business {
+  id                         String          @id @default(uuid())
+  ownerId                    String
+  owner                      User            @relation("BusinessOwner", fields: [ownerId], references: [id])
+  name                       String
+  slug                       String          @unique
+  categoryId                 String
+  category                   BusinessCategory @relation(fields: [categoryId], references: [id])
+  description                String          @default("")
+  logoUrl                    String?
+  coverImageUrl              String?
+  status                     BusinessStatus  @default(PENDING)
+  storeState                 StoreState      @default(OPEN)
+  latitude                   Float
+  longitude                  Float
+  address                    String
+  openingHours               Json
+  zoneId                     String?
+  zone                       DeliveryZone?   @relation(fields: [zoneId], references: [id])
+  commissionOverridePercent  Decimal?        @db.Decimal(5, 2)
+  ratingAvg                  Float           @default(0)
+  ratingCount                Int             @default(0)
+  createdAt                  DateTime        @default(now())
+  approvedAt                 DateTime?
+  approvedById               String?
+
+  productCategories ProductCategory[]
+  products          Product[]
+  orders            Order[]
+  reviews           Review[]
+  promotions        Promotion[]
+  favoritedBy       FavoriteBusiness[]
+
+  @@index([categoryId])
+  @@index([status])
+}
+
+model ProductCategory {
+  id         String   @id @default(uuid())
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id])
+  name       String
+  sortOrder  Int      @default(0)
+
+  products Product[]
+
+  @@index([businessId])
+}
+
+model Product {
+  id          String   @id @default(uuid())
+  businessId  String
+  business    Business @relation(fields: [businessId], references: [id])
+  categoryId  String
+  category    ProductCategory @relation(fields: [categoryId], references: [id])
+  name        String
+  description String   @default("")
+  price       Decimal  @db.Decimal(10, 2)
+  imageUrl    String?
+  isAvailable Boolean  @default(true)
+  stock       Int?
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  addOns      ProductAddOn[]
+  orderItems  OrderItem[]
+  favoritedBy FavoriteProduct[]
+
+  @@index([businessId])
+  @@index([categoryId])
+}
+
+model ProductAddOn {
+  id         String  @id @default(uuid())
+  productId  String
+  product    Product @relation(fields: [productId], references: [id])
+  name       String
+  priceDelta Decimal @db.Decimal(10, 2) @default(0)
+
+  @@index([productId])
+}
+
+// ── Platform / ops ───────────────────────────────────────────────────────
+
+/// A zone both defines "is this address inside our service area?" and how
+/// its delivery fee is computed — this is how "Chirundu only, for now" is
+/// enforced without ever hardcoding the town name in application logic.
+model DeliveryZone {
+  id              String          @id @default(uuid())
+  name            String          @unique
+  isServiceArea   Boolean         @default(true)
+  feeType         DeliveryFeeType @default(DISTANCE_BASED)
+  fixedFee        Decimal?        @db.Decimal(10, 2)
+  centerLatitude  Float
+  centerLongitude Float
+  radiusKm        Float
+  createdAt       DateTime        @default(now())
+
+  businesses Business[]
+}
+
+/// Versioned global default fee config (base + per-km). Only one row should
+/// have isActive=true at a time; history is kept for reporting.
+model DeliveryFeeConfig {
+  id            String   @id @default(uuid())
+  baseFee       Decimal  @db.Decimal(10, 2)
+  perKmFee      Decimal  @db.Decimal(10, 2)
+  isActive      Boolean  @default(true)
+  effectiveFrom DateTime @default(now())
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  actorUserId String?
+  actor       User?    @relation("AuditActor", fields: [actorUserId], references: [id])
+  action      String
+  entityType  String
+  entityId    String
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  @@index([entityType, entityId])
+}
+
+// ── Orders & delivery ────────────────────────────────────────────────────
+
+model Order {
+  id         String   @id @default(uuid())
+  orderNumber String  @unique
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id])
+  addressId  String
+  address    Address  @relation(fields: [addressId], references: [id])
+  riderId    String?
+  rider      Rider?   @relation(fields: [riderId], references: [id])
+
+  status        OrderStatus   @default(PENDING_CONFIRMATION)
+  paymentStatus PaymentStatus @default(UNPAID)
+  paymentMethod PaymentMethod
+
+  subtotal       Decimal @db.Decimal(10, 2)
+  deliveryFee    Decimal @db.Decimal(10, 2)
+  serviceFee     Decimal @db.Decimal(10, 2)
+  discountAmount Decimal @db.Decimal(10, 2) @default(0)
+  total          Decimal @db.Decimal(10, 2)
+
+  // Snapshotted at creation so later admin changes never rewrite history.
+  commissionPercent    Decimal @db.Decimal(5, 2)
+  commissionAmount     Decimal @db.Decimal(10, 2)
+  businessPayoutAmount Decimal @db.Decimal(10, 2)
+
+  deliveryFeeOverridden Boolean @default(false)
+  deliveryInstructions  String?
+  /// Client-generated key; unique constraint is what makes double-submit safe.
+  idempotencyKey        String  @unique
+  promotionId           String?
+  promotion             Promotion? @relation(fields: [promotionId], references: [id])
+  cancelReason          String?
+
+  placedAt     DateTime  @default(now())
+  confirmedAt  DateTime?
+  preparingAt  DateTime?
+  readyAt      DateTime?
+  pickedUpAt   DateTime?
+  deliveredAt  DateTime?
+  cancelledAt  DateTime?
+
+  items                OrderItem[]
+  delivery             Delivery?
+  payment              Payment?
+  review               Review?
+  statusEvents         OrderStatusEvent[]
+  commission           Commission?
+  promotionRedemption  PromotionRedemption?
+
+  @@index([customerId])
+  @@index([businessId])
+  @@index([riderId])
+  @@index([status])
+}
+
+model OrderItem {
+  id                  String  @id @default(uuid())
+  orderId             String
+  order               Order   @relation(fields: [orderId], references: [id])
+  productId           String
+  product             Product @relation(fields: [productId], references: [id])
+  nameSnapshot        String
+  priceSnapshot       Decimal @db.Decimal(10, 2)
+  quantity            Int
+  addOnsLabel         String?
+  addOnsPriceSnapshot Decimal @db.Decimal(10, 2) @default(0)
+  specialInstructions String?
+
+  @@index([orderId])
+}
+
+/// Append-only audit trail behind the tracking screen's status timeline.
+model OrderStatusEvent {
+  id              String      @id @default(uuid())
+  orderId         String
+  order           Order       @relation(fields: [orderId], references: [id])
+  status          OrderStatus
+  changedByUserId String?
+  changedAt       DateTime    @default(now())
+
+  @@index([orderId])
+}
+
+model Rider {
+  id                    String            @id @default(uuid())
+  userId                String            @unique
+  user                  User              @relation(fields: [userId], references: [id])
+  fullName              String
+  nationalId            String
+  profilePhotoUrl       String?
+  vehicleType           VehicleType
+  vehicleRegNo          String?
+  licenseNo             String?
+  emergencyContactName  String
+  emergencyContactPhone String
+  payoutMethod          String?
+  payoutDetails         String?
+
+  status          ApprovalStatus    @default(PENDING)
+  onlineStatus    RiderOnlineStatus @default(OFFLINE)
+  currentLatitude  Float?
+  currentLongitude Float?
+  lastLocationAt  DateTime?
+  ratingAvg       Float             @default(0)
+  ratingCount     Int               @default(0)
+  approvedAt      DateTime?
+  approvedById    String?
+  createdAt       DateTime          @default(now())
+
+  documents     RiderDocument[]
+  orders        Order[]
+  deliveries    Delivery[]
+  reviews       Review[]
+  locationPings DeliveryLocationPing[]
+}
+
+model RiderDocument {
+  id         String         @id @default(uuid())
+  riderId    String
+  rider      Rider          @relation(fields: [riderId], references: [id])
+  type       DocumentType
+  fileUrl    String
+  status     DocumentStatus @default(PENDING)
+  uploadedAt DateTime       @default(now())
+  reviewedAt DateTime?
+
+  @@index([riderId])
+}
+
+/// Finer-grained rider-side workflow than Order.status (spec section 13).
+model Delivery {
+  id      String @id @default(uuid())
+  orderId String @unique
+  order   Order  @relation(fields: [orderId], references: [id])
+  riderId String?
+  rider   Rider?  @relation(fields: [riderId], references: [id])
+
+  status            DeliveryStatus @default(ASSIGNED)
+  distanceKm        Float
+  estimatedEarnings Decimal        @db.Decimal(10, 2)
+  actualEarnings    Decimal?       @db.Decimal(10, 2)
+
+  pickupLatitude   Float
+  pickupLongitude  Float
+  dropoffLatitude  Float
+  dropoffLongitude Float
+  /// Shown to the rider, confirmed by the customer at handoff.
+  deliveryPin      String
+
+  assignedAt      DateTime  @default(now())
+  arrivedPickupAt DateTime?
+  pickedUpAt      DateTime?
+  arrivedDropoffAt DateTime?
+  completedAt     DateTime?
+
+  locationPings DeliveryLocationPing[]
+
+  @@index([riderId])
+}
+
+/// Append-only GPS trail — drives the live map + route history.
+model DeliveryLocationPing {
+  id         String   @id @default(uuid())
+  deliveryId String
+  delivery   Delivery @relation(fields: [deliveryId], references: [id])
+  riderId    String
+  rider      Rider    @relation(fields: [riderId], references: [id])
+  latitude   Float
+  longitude  Float
+  recordedAt DateTime @default(now())
+
+  @@index([deliveryId, recordedAt])
+}
+
+// ── Payments & money ─────────────────────────────────────────────────────
+
+model Payment {
+  id          String        @id @default(uuid())
+  orderId     String        @unique
+  order       Order         @relation(fields: [orderId], references: [id])
+  method      PaymentMethod
+  status      PaymentStatus @default(UNPAID)
+  amount      Decimal       @db.Decimal(10, 2)
+  providerRef String?
+  initiatedAt DateTime      @default(now())
+  completedAt DateTime?
+
+  transactions Transaction[]
+}
+
+model Transaction {
+  id          String           @id @default(uuid())
+  paymentId   String
+  payment     Payment          @relation(fields: [paymentId], references: [id])
+  type        TransactionType
+  amount      Decimal          @db.Decimal(10, 2)
+  status      PaymentStatus
+  providerRef String?
+  createdAt   DateTime         @default(now())
+
+  @@index([paymentId])
+}
+
+/// Ledger row per completed order — kept separate from Order's own snapshot
+/// fields for reporting flexibility (e.g. payout batching).
+model Commission {
+  id         String   @id @default(uuid())
+  orderId    String   @unique
+  order      Order    @relation(fields: [orderId], references: [id])
+  businessId String
+  percent    Decimal  @db.Decimal(5, 2)
+  amount     Decimal  @db.Decimal(10, 2)
+  createdAt  DateTime @default(now())
+
+  @@index([businessId])
+}
+
+// ── Marketing & trust ────────────────────────────────────────────────────
+
+model Promotion {
+  id                String        @id @default(uuid())
+  code              String        @unique
+  type              PromotionType
+  value             Decimal       @db.Decimal(10, 2)
+  businessId        String?
+  business          Business?     @relation(fields: [businessId], references: [id])
+  minOrderAmount    Decimal?      @db.Decimal(10, 2)
+  maxDiscountAmount Decimal?      @db.Decimal(10, 2)
+  usageLimit        Int?
+  perCustomerLimit  Int?          @default(1)
+  startsAt          DateTime      @default(now())
+  endsAt            DateTime?
+  isActive          Boolean       @default(true)
+  createdAt         DateTime      @default(now())
+
+  orders      Order[]
+  redemptions PromotionRedemption[]
+}
+
+model PromotionRedemption {
+  id          String    @id @default(uuid())
+  promotionId String
+  promotion   Promotion @relation(fields: [promotionId], references: [id])
+  customerId  String
+  customer    Customer  @relation(fields: [customerId], references: [id])
+  orderId     String    @unique
+  order       Order     @relation(fields: [orderId], references: [id])
+  redeemedAt  DateTime  @default(now())
+
+  @@index([promotionId, customerId])
+}
+
+/// One row per order — captures both the business rating and the rider
+/// rating in a single post-delivery review, matching the customer app flow.
+model Review {
+  id              String   @id @default(uuid())
+  orderId         String   @unique
+  order           Order    @relation(fields: [orderId], references: [id])
+  customerId      String
+  customer        Customer @relation(fields: [customerId], references: [id])
+  businessId      String?
+  business        Business? @relation(fields: [businessId], references: [id])
+  riderId         String?
+  rider           Rider?   @relation(fields: [riderId], references: [id])
+  businessRating  Int?
+  businessComment String?
+  riderRating     Int?
+  riderComment    String?
+  isModerated     Boolean  @default(false)
+  isHidden        Boolean  @default(false)
+  createdAt       DateTime @default(now())
+}
+
+model FavoriteBusiness {
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
+  businessId String
+  business   Business @relation(fields: [businessId], references: [id])
+  createdAt  DateTime @default(now())
+
+  @@id([customerId, businessId])
+}
+
+model FavoriteProduct {
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id])
+  createdAt  DateTime @default(now())
+
+  @@id([customerId, productId])
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id])
+  type      NotificationType
+  title     String
+  body      String
+  data      Json?
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  @@index([userId, isRead])
+}
