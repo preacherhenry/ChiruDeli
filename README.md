@@ -114,6 +114,40 @@ Note: Render's free plan spins the service down after 15 minutes of
 inactivity — the first request after a while will take a few extra seconds
 to wake it back up.
 
+## Publishing the customer app (EAS Update)
+
+With the API on Render, the last local dependency is the Metro bundler
+serving the app's JS to Expo Go over your LAN. `eas update` removes that
+too — it uploads the built JS bundle to Expo's servers, giving a permanent
+link that opens in Expo Go from any network.
+
+```bash
+cd apps/customer-mobile
+npx eas-cli login                      # or set EXPO_TOKEN for non-interactive auth
+npx eas-cli init                       # one-time: links the project to your Expo account
+npx expo install expo-updates          # one-time: only if not already a dependency
+npx eas-cli update --branch main --message "Describe this update"
+```
+
+Re-run the last command any time you want to push new changes — no rebuild
+or new link needed, Expo Go always fetches the latest published update for
+that branch. The published link looks like
+`https://expo.dev/accounts/<account>/projects/chirudeli-customer/updates/<id>`;
+open it on the phone with Expo Go's **Scan QR code**, or scan the QR shown
+on that page.
+
+Two monorepo-specific gotchas already fixed here, worth knowing about if a
+future SDK upgrade reintroduces them:
+- **Entry point resolution**: `expo/AppEntry.js`'s own relative imports
+  assume it lives in your project's own `node_modules`, which npm
+  workspaces hoisting breaks. Both mobile apps use a local `index.js`
+  entry instead (`"main": "index.js"` in `package.json`).
+- **NativeWind's Reanimated 4 assumption**: `react-native-css-interop`
+  0.2.6 unconditionally references a Reanimated-4-only babel plugin even
+  on projects (like this one, on Expo SDK 51) pinned to Reanimated 3.x.
+  Patched via `patch-package` (see `patches/`) — reapplied automatically
+  on every `npm install` via the root `postinstall` script.
+
 ## Project structure
 
 ```
