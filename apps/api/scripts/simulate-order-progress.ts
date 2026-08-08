@@ -1,14 +1,14 @@
 /**
- * Drives a real order through the full ChiruDeli status workflow against a
- * RUNNING API server (`npm run dev` in another terminal), so the customer
- * app's live tracking screen can be demoed end-to-end before the rider and
- * business apps exist. Talks to the server's /dev/* harness (dev.routes.ts)
- * so every Socket.io broadcast comes from the same process the mobile app
- * is connected to.
+ * Drives a real (possibly multi-store) order through the full ChiruDeli
+ * workflow against a RUNNING API server (`npm run dev` in another
+ * terminal), so the customer app's live tracking screen can be demoed
+ * end-to-end before the rider and business apps exist. Talks to the
+ * server's /dev/* harness (dev.routes.ts) so every Socket.io broadcast
+ * comes from the same process the mobile app is connected to.
  *
- * Usage: npm run simulate [orderId]
- *   With no orderId, simulates the demo customer's most recent order
- *   sitting in PENDING_CONFIRMATION (i.e. whatever you just checked out).
+ * Usage: npm run simulate [masterOrderId]
+ *   With no id, simulates the demo customer's most recent order sitting in
+ *   PENDING_CONFIRMATION (i.e. whatever you just checked out).
  */
 import 'dotenv/config';
 import { PrismaClient } from '@prisma/client';
@@ -24,7 +24,7 @@ function sleep(ms: number) {
 async function post(path: string, body?: unknown) {
   const res = await fetch(`${API_URL}${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: body ? { 'Content-Type': 'application/json' } : {},
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {
@@ -38,73 +38,84 @@ function lerp(a: number, b: number, t: number) {
 }
 
 async function main() {
-  const orderIdArg = process.argv[2];
+  const masterOrderIdArg = process.argv[2];
 
-  const order = orderIdArg
-    ? await prisma.order.findUniqueOrThrow({ where: { id: orderIdArg }, include: { business: true, address: true } })
+  const masterOrder = masterOrderIdArg
+    ? await prisma.masterOrder.findUniqueOrThrow({
+        where: { id: masterOrderIdArg },
+        include: { address: true, storeOrders: { include: { business: true }, orderBy: { sequence: 'asc' } } },
+      })
     : await (async () => {
         const user = await prisma.user.findUniqueOrThrow({ where: { phone: DEMO_CUSTOMER_PHONE } });
         const customer = await prisma.customer.findUniqueOrThrow({ where: { userId: user.id } });
-        const found = await prisma.order.findFirst({
-          where: { customerId: customer.id, status: 'PENDING_CONFIRMATION' },
+        const found = await prisma.masterOrder.findFirst({
+          where: { customerId: customer.id, storeOrders: { some: { status: 'PENDING_CONFIRMATION' } } },
           orderBy: { placedAt: 'desc' },
-          include: { business: true, address: true },
+          include: { address: true, storeOrders: { include: { business: true }, orderBy: { sequence: 'asc' } } },
         });
         if (!found) {
           throw new Error(
-            `No PENDING_CONFIRMATION order found for ${DEMO_CUSTOMER_PHONE}. Place an order in the customer app first, or pass an order id: npm run simulate <orderId>`,
+            `No pending order found for ${DEMO_CUSTOMER_PHONE}. Place an order in the customer app first, or pass a master order id: npm run simulate <masterOrderId>`,
           );
         }
         return found;
       })();
 
-  console.log(`Simulating order ${order.orderNumber} (${order.id})\n`);
+  const storeCount = masterOrder.storeOrders.length;
+  console.log(
+    `Simulating order ${masterOrder.orderNumber} (${masterOrder.id}) — ${storeCount} store${storeCount > 1 ? 's' : ''}\n`,
+  );
 
-  const step = async (label: string, fn: () => Promise<unknown>, delayMs = 3500) => {
+  const step = async (label: string, fn: () => Promise<unknown>, delayMs = 2500) => {
     await fn();
     console.log(`  ✓ ${label}`);
     await sleep(delayMs);
   };
 
-  await step('Business confirmed the order', () => post(`/dev/orders/${order.id}/advance`, { toStatus: 'CONFIRMED' }));
-  await step('Business is preparing the order', () => post(`/dev/orders/${order.id}/advance`, { toStatus: 'PREPARING' }));
-  await step('Order ready for pickup', () => post(`/dev/orders/${order.id}/advance`, { toStatus: 'READY_FOR_PICKUP' }));
+  for (const status of ['CONFIRMED', 'PREPARING', 'READY_FOR_PICKUP'] as const) {
+    for (const so of masterOrder.storeOrders) {
+      await step(`${so.business.name}: ${status.replace(/_/g, ' ').toLowerCase()}`, () =>
+        post(`/dev/store-orders/${so.id}/advance`, { toStatus: status }),
+      );
+    }
+  }
 
-  const ridersRes = await fetch(`${API_URL}/dev/riders/online`);
-  const riders = (await ridersRes.json()) as Array<{ id: string; fullName: string }>;
+  const riders = (await fetch(`${API_URL}/dev/riders/online`).then((r) => r.json())) as Array<{
+    id: string;
+    fullName: string;
+  }>;
   if (riders.length === 0) throw new Error('No online riders — run `npm run prisma:seed` first.');
   const rider = riders[0]!;
-  await step(`Rider ${rider.fullName} assigned`, () => post(`/dev/orders/${order.id}/assign-rider`, { riderId: rider.id }));
+  await step(`Rider ${rider.fullName} assigned`, () => post(`/dev/master-orders/${masterOrder.id}/assign-rider`, { riderId: rider.id }));
 
-  const updatedOrder = await prisma.order.findUniqueOrThrow({ where: { id: order.id }, include: { delivery: true } });
-  const delivery = updatedOrder.delivery!;
+  const delivery = await prisma.masterDelivery.findUniqueOrThrow({
+    where: { masterOrderId: masterOrder.id },
+    include: { stops: { orderBy: { sequence: 'asc' } } },
+  });
 
-  console.log('  → Rider en route to pickup...');
-  for (let i = 1; i <= 3; i++) {
-    const t = i / 3;
-    await post(`/dev/deliveries/${delivery.id}/ping`, {
-      riderId: rider.id,
-      latitude: lerp(order.business.latitude - 0.01, order.business.latitude, t),
-      longitude: lerp(order.business.longitude - 0.01, order.business.longitude, t),
-    });
-    await sleep(1500);
+  let riderLat = masterOrder.storeOrders[0]!.business.latitude - 0.01;
+  let riderLng = masterOrder.storeOrders[0]!.business.longitude - 0.01;
+
+  for (const stop of delivery.stops) {
+    console.log(`  → Rider en route to ${stop.label}...`);
+    for (let i = 1; i <= 3; i++) {
+      const t = i / 3;
+      await post(`/dev/master-deliveries/${delivery.id}/ping`, {
+        riderId: rider.id,
+        latitude: lerp(riderLat, stop.latitude, t),
+        longitude: lerp(riderLng, stop.longitude, t),
+      });
+      await sleep(1200);
+    }
+    riderLat = stop.latitude;
+    riderLng = stop.longitude;
+
+    await step(
+      stop.type === 'PICKUP' ? `Picked up from ${stop.label}` : 'Delivered to customer',
+      () => post(`/dev/master-orders/${masterOrder.id}/complete-stop/${stop.id}`),
+      stop.type === 'DROPOFF' ? 0 : 1500,
+    );
   }
-
-  await step('Rider picked up the order', () => post(`/dev/orders/${order.id}/advance`, { toStatus: 'PICKED_UP' }));
-  await step('Rider is on the way', () => post(`/dev/orders/${order.id}/advance`, { toStatus: 'ON_THE_WAY' }));
-
-  console.log('  → Rider en route to customer...');
-  for (let i = 1; i <= 4; i++) {
-    const t = i / 4;
-    await post(`/dev/deliveries/${delivery.id}/ping`, {
-      riderId: rider.id,
-      latitude: lerp(order.business.latitude, order.address.latitude, t),
-      longitude: lerp(order.business.longitude, order.address.longitude, t),
-    });
-    await sleep(1500);
-  }
-
-  await step('Order delivered', () => post(`/dev/orders/${order.id}/advance`, { toStatus: 'DELIVERED' }), 0);
 
   console.log('\nDone — order fully delivered. Check the customer app tracking screen for live updates.');
 }

@@ -8,11 +8,14 @@ import type {
   BusinessSummary,
   BusinessDetail,
   Product,
-  Order,
-  OrderSummary,
+  MasterOrder,
+  MasterOrderSummary,
   CreateOrderInput,
+  PreviewOrderInput,
+  OrderPreview,
   CancelOrderInput,
   SubmitReviewInput,
+  SubmitRiderReviewInput,
   Review,
   Notification,
   PromoValidationResult,
@@ -70,7 +73,8 @@ export class ApiClient {
       }
     }
 
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const headers: Record<string, string> = {};
+    if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
     if (!this.useCookies) {
       const token = await this.tokenStorage.getAccessToken();
       if (token) headers.Authorization = `Bearer ${token}`;
@@ -182,13 +186,20 @@ export class ApiClient {
 
   orders = {
     create: (input: CreateOrderInput) =>
-      this.request<Order>('/orders', { method: 'POST', body: input }),
-    get: (id: string) => this.request<Order>(`/orders/${id}`),
-    list: () => this.request<OrderSummary[]>('/orders'),
+      this.request<MasterOrder>('/orders', { method: 'POST', body: input }),
+    preview: (input: PreviewOrderInput) =>
+      this.request<OrderPreview>('/orders/preview', { method: 'POST', body: input }),
+    get: (id: string) => this.request<MasterOrder>(`/orders/${id}`),
+    list: () => this.request<MasterOrderSummary[]>('/orders'),
     cancel: (id: string, input: CancelOrderInput) =>
-      this.request<Order>(`/orders/${id}/cancel`, { method: 'POST', body: input }),
+      this.request<MasterOrder>(`/orders/${id}/cancel`, { method: 'POST', body: input }),
+    riderReview: (id: string, input: SubmitRiderReviewInput) =>
+      this.request<MasterOrder>(`/orders/${id}/rider-review`, { method: 'POST', body: input }),
+  };
+
+  storeOrders = {
     review: (id: string, input: SubmitReviewInput) =>
-      this.request<Review>(`/orders/${id}/review`, { method: 'POST', body: input }),
+      this.request<Review>(`/store-orders/${id}/review`, { method: 'POST', body: input }),
   };
 
   notifications = {
@@ -198,9 +209,10 @@ export class ApiClient {
   };
 
   promotions = {
-    validate: (code: string, subtotal: number, businessId?: string) =>
+    validate: (code: string, subtotal: number, businessIds: string[] = []) =>
       this.request<PromoValidationResult>('/promotions/validate', {
-        query: { code, subtotal, businessId },
+        method: 'POST',
+        body: { code, subtotal, businessIds },
       }),
   };
 }

@@ -43,6 +43,55 @@ export function calculateCommission(
   return { commissionAmount, businessPayoutAmount };
 }
 
+/** Flat top-up per store beyond the first, to cover the rider's extra stops. */
+export const MULTI_STORE_SURCHARGE_PER_EXTRA_STORE = 10;
+
+/**
+ * Same zone-based formula as a single-store order, plus a flat surcharge
+ * per additional store — a multi-pickup run takes the rider meaningfully
+ * longer than a single pickup, so the fee (which the rider keeps in full)
+ * should reflect that.
+ */
+export function calculateMultiStoreDeliveryFee(params: {
+  zone: ZoneForFee;
+  totalDistanceKm: number;
+  feeConfig: FeeConfig;
+  storeCount: number;
+}): number {
+  const base = calculateDeliveryFee({
+    zone: params.zone,
+    distanceKm: params.totalDistanceKm,
+    feeConfig: params.feeConfig,
+  });
+  const surcharge = Math.max(0, params.storeCount - 1) * MULTI_STORE_SURCHARGE_PER_EXTRA_STORE;
+  return round2(base + surcharge);
+}
+
+/**
+ * Orders the rider's pickups and returns the total route distance. No real
+ * route optimizer here — a simple nearest-to-destination-last heuristic
+ * (farthest store first) keeps the rider from backtracking past a nearby
+ * store to reach a farther one after picking up nearer stores first.
+ */
+export function sequencePickupStops<T extends Coordinates>(
+  stores: T[],
+  destination: Coordinates,
+): { ordered: T[]; totalDistanceKm: number } {
+  const ordered = [...stores].sort(
+    (a, b) => distanceProvider.distanceKm(b, destination) - distanceProvider.distanceKm(a, destination),
+  );
+
+  let totalDistanceKm = 0;
+  let from: Coordinates = ordered[0] ?? destination;
+  for (const stop of ordered.slice(1)) {
+    totalDistanceKm += distanceProvider.distanceKm(from, stop);
+    from = stop;
+  }
+  totalDistanceKm += distanceProvider.distanceKm(from, destination);
+
+  return { ordered, totalDistanceKm: Math.round(totalDistanceKm * 100) / 100 };
+}
+
 /** First service zone whose radius contains the point; null = outside coverage. */
 export async function resolveZoneForCoordinates(coords: Coordinates): Promise<ZoneForFee | null> {
   // Smallest radius first so a narrow "Town" zone wins over a wider catch-all

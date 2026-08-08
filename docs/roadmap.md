@@ -31,6 +31,28 @@ fit together.
   and design system wired in, screens present and routable with placeholder
   content — see "Next up" below for making them real.
 
+## Done this session — multi-store cart & order splitting
+
+- Customers add items from any number of stores into one cart; checkout
+  automatically splits it into a `MasterOrder` (what the customer pays/
+  tracks) plus one `Order` ("store order") per business — see
+  `docs/architecture.md`'s "Multi-store cart & order splitting" section for
+  the full model and rules.
+- Delivery fee now accounts for multi-store pickups (per-extra-store
+  surcharge); a single rider is assigned one `MasterDelivery` with a
+  strictly-sequenced pickup route (farthest-from-destination first) plus the
+  final dropoff, walked stop-by-stop via `DeliveryStop`.
+- Reviews split accordingly: one per store order (rates that business) plus
+  one rider rating on the master order.
+- `packages/shared-types`, `packages/api-client`, and every customer-mobile
+  order/cart/checkout/tracking screen were rewritten against the new shapes;
+  `scripts/simulate-order-progress.ts` now walks a multi-store order through
+  every store's status progression and every delivery stop end-to-end.
+- Verified live against the real (Neon) database: placed a real two-store
+  order via the API, confirmed correct per-store subtotals and multi-store
+  delivery surcharge in the totals, and ran the full simulation through
+  rider assignment, both pickups, and final delivery.
+
 ## Known limitations to fix before this is production-real
 
 - **Payments**: Cash on Delivery is fully functional. Mobile Money and Card
@@ -49,8 +71,8 @@ fit together.
   `android.config.googleMaps.apiKey`) for a production build.
 - **Rider location**: real GPS pings only exist via the dev simulation
   script today — the real rider app needs to call
-  `POST /dev/deliveries/:id/ping`'s *production* equivalent (a role-gated
-  `POST /riders/me/location`) on an interval while online.
+  `POST /dev/master-deliveries/:id/ping`'s *production* equivalent (a
+  role-gated `POST /riders/me/location`) on an interval while online.
 - **Favorites**: client-only (AsyncStorage), not synced to the
   `FavoriteBusiness`/`FavoriteProduct` tables yet.
 - **2FA**: `AdminUser.twoFactorSecret`/`twoFactorEnabled` exist in the
@@ -60,9 +82,11 @@ fit together.
 
 1. **Rider app backend** — approval workflow (`RiderDocument` upload +
    admin review), `GET /deliveries/available`, accept/decline, the
-   pickup→dropoff status endpoints `advanceOrderStatus`/`assignRider`
-   already support server-side (just need role-gated routes), earnings
-   aggregation, delivery-PIN confirmation at handoff.
+   pickup→dropoff status endpoints (`advanceStoreOrderStatus`,
+   `assignRiderToMasterOrder`, `completeDeliveryStop` in
+   `orders.service.ts`) already support this server-side — just need
+   role-gated routes, earnings aggregation, delivery-PIN confirmation at
+   the final handoff.
 2. **Business dashboard backend** — registration + approval workflow,
    product CRUD (`upsertProductSchema` already defined), order
    accept/reject and status updates, sales reporting, store pause/unpause.

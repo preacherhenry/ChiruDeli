@@ -22,7 +22,8 @@ export function OrderConfirmationScreen() {
         </View>
         <Text className="text-center font-heading text-2xl text-neutral-900">Order placed!</Text>
         <Text className="text-center font-body text-sm text-neutral-500">
-          Order #{order.data.orderNumber} from {order.data.businessName} has been sent for confirmation.
+          Order #{order.data.orderNumber} from {order.data.storeOrders.map((s) => s.businessName).join(', ')} has
+          been sent for confirmation.
         </Text>
         <View className="w-full gap-2 rounded-lg bg-white p-4">
           <View className="flex-row justify-between">

@@ -3,8 +3,10 @@ import { idSchema, moneySchema } from './primitives';
 
 /**
  * The cart is client-side only (not persisted server-side) — it's submitted
- * wholesale as part of CreateOrderInput at checkout. This schema is the
- * shape the customer app keeps in its local cart store.
+ * wholesale as part of CreateOrderInput at checkout. Items from any number
+ * of businesses can sit in the cart at once; the customer never has to
+ * clear or switch carts to order from a different store (see
+ * docs/architecture.md, "Multi-store cart & order splitting").
  */
 export const cartItemSchema = z.object({
   productId: idSchema,
@@ -18,8 +20,14 @@ export const cartItemSchema = z.object({
 });
 export type CartItem = z.infer<typeof cartItemSchema>;
 
-export const cartSchema = z.object({
-  businessId: idSchema.nullable(),
+export const cartStoreSchema = z.object({
+  businessId: idSchema,
+  businessName: z.string(),
   items: z.array(cartItemSchema),
+});
+export type CartStore = z.infer<typeof cartStoreSchema>;
+
+export const cartSchema = z.object({
+  stores: z.array(cartStoreSchema),
 });
 export type Cart = z.infer<typeof cartSchema>;

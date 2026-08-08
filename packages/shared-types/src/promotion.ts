@@ -1,13 +1,14 @@
 import { z } from 'zod';
-import { moneySchema } from './primitives';
+import { idSchema, moneySchema } from './primitives';
 import { PromotionType } from './enums';
 
-export const validatePromoQuerySchema = z.object({
+export const validatePromoInputSchema = z.object({
   code: z.string().min(2).max(30),
-  businessId: z.string().uuid().optional(),
   subtotal: moneySchema,
+  /** Every business currently in the cart. */
+  businessIds: z.array(idSchema).default([]),
 });
-export type ValidatePromoQuery = z.infer<typeof validatePromoQuerySchema>;
+export type ValidatePromoInput = z.infer<typeof validatePromoInputSchema>;
 
 export const promoValidationResultSchema = z.object({
   valid: z.boolean(),

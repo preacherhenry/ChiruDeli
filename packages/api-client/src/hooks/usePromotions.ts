@@ -8,11 +8,11 @@ export function useValidatePromo() {
     mutationFn: ({
       code,
       subtotal,
-      businessId,
+      businessIds,
     }: {
       code: string;
       subtotal: number;
-      businessId?: string;
-    }) => client.promotions.validate(code, subtotal, businessId),
+      businessIds: string[];
+    }) => client.promotions.validate(code, subtotal, businessIds),
   });
 }

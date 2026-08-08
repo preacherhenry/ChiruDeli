@@ -1,12 +1,12 @@
-import { useRef, useState } from 'react';
-import { View, Text, ScrollView, Pressable, TextInput, Alert } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { View, Text, ScrollView, Pressable, TextInput, Alert, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ChevronLeft, MapPin, Check, Banknote, Smartphone, CreditCard, Plus } from 'lucide-react-native';
+import { ChevronLeft, MapPin, Check, Banknote, Smartphone, CreditCard, Plus, Store } from 'lucide-react-native';
 import {
   useAddresses,
   useCreateAddress,
-  useBusiness,
   useCreateOrder,
+  usePreviewOrder,
   useValidatePromo,
   generateIdempotencyKey,
   ApiError,
@@ -18,29 +18,28 @@ import { useLocationStore } from '../../state/locationStore';
 import { Button } from '../../components/Button';
 import { LoadingState } from '../../components/LoadingState';
 import { formatK } from '../../lib/money';
-import { ESTIMATED_SERVICE_FEE } from '../../lib/constants';
 
-const PAYMENT_METHODS: Array<{ value: PaymentMethod; label: string; icon: typeof Banknote; available: boolean }> = [
-  { value: 'CASH_ON_DELIVERY', label: 'Cash on Delivery', icon: Banknote, available: true },
-  { value: 'MOBILE_MONEY', label: 'Mobile Money', icon: Smartphone, available: true },
-  { value: 'CARD', label: 'Card payment', icon: CreditCard, available: true },
+const PAYMENT_METHODS: Array<{ value: PaymentMethod; label: string; icon: typeof Banknote }> = [
+  { value: 'CASH_ON_DELIVERY', label: 'Cash on Delivery', icon: Banknote },
+  { value: 'MOBILE_MONEY', label: 'Mobile Money', icon: Smartphone },
+  { value: 'CARD', label: 'Card payment', icon: CreditCard },
 ];
 
 export function CheckoutScreen() {
   const navigation = useAppNavigation();
-  const { businessId, businessName, items, subtotal, clearCart } = useCartStore();
+  const { stores, clearCart } = useCartStore();
   const { coords } = useLocationStore();
   const addresses = useAddresses();
   const createAddress = useCreateAddress();
-  const business = useBusiness(businessId ?? undefined, { lat: coords?.latitude, lng: coords?.longitude });
   const createOrder = useCreateOrder();
+  const preview = usePreviewOrder();
   const validatePromo = useValidatePromo();
 
   const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
   const [instructions, setInstructions] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH_ON_DELIVERY');
   const [promoCode, setPromoCode] = useState('');
-  const [appliedPromo, setAppliedPromo] = useState<{ code: string; discountAmount: number; freeDelivery: boolean } | null>(null);
+  const [appliedPromoCode, setAppliedPromoCode] = useState<string | null>(null);
   const [promoMessage, setPromoMessage] = useState<string | null>(null);
   const [addingAddress, setAddingAddress] = useState(false);
   const [newAddressLabel, setNewAddressLabel] = useState('Home');
@@ -55,22 +54,32 @@ export function CheckoutScreen() {
   const activeAddress = addresses.data?.find((a) => a.id === selectedAddressId) ?? addresses.data?.find((a) => a.isDefault) ?? addresses.data?.[0];
   const effectiveAddressId = selectedAddressId ?? activeAddress?.id ?? null;
 
-  const sub = subtotal();
-  const deliveryFee = business.data?.deliveryFee ?? 0;
-  const discount = appliedPromo?.freeDelivery ? deliveryFee : (appliedPromo?.discountAmount ?? 0);
-  const total = Math.max(0, sub + deliveryFee + ESTIMATED_SERVICE_FEE - discount);
+  const orderItems = stores.flatMap((store) =>
+    store.items.map((item) => ({
+      businessId: store.businessId,
+      productId: item.productId,
+      quantity: item.quantity,
+      addOnIds: item.addOnIds,
+      specialInstructions: item.specialInstructions,
+    })),
+  );
+  const businessIds = stores.map((s) => s.businessId);
+
+  useEffect(() => {
+    if (!effectiveAddressId || orderItems.length === 0) return;
+    preview.mutate({ items: orderItems, addressId: effectiveAddressId, promoCode: appliedPromoCode ?? undefined });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveAddressId, appliedPromoCode]);
+
+  const totals = preview.data?.totals;
 
   const onApplyPromo = () => {
     if (!promoCode.trim()) return;
     validatePromo.mutate(
-      { code: promoCode.trim(), subtotal: sub, businessId: businessId ?? undefined },
+      { code: promoCode.trim(), subtotal: totals?.subtotal ?? 0, businessIds },
       {
         onSuccess: (res) => {
-          if (res.valid) {
-            setAppliedPromo({ code: res.code, discountAmount: res.discountAmount ?? 0, freeDelivery: Boolean(res.freeDelivery) });
-          } else {
-            setAppliedPromo(null);
-          }
+          setAppliedPromoCode(res.valid ? res.code : null);
           setPromoMessage(res.message);
         },
         onError: () => setPromoMessage('Could not validate this code right now.'),
@@ -100,20 +109,19 @@ export function CheckoutScreen() {
   };
 
   const onPlaceOrder = () => {
-    if (!businessId || !effectiveAddressId) {
+    if (!effectiveAddressId) {
       Alert.alert('Missing information', 'Please select a delivery address first.');
       return;
     }
 
     if (paymentMethod === 'MOBILE_MONEY' || paymentMethod === 'CARD') {
       navigation.navigate('Payment', {
-        businessId,
         addressId: effectiveAddressId,
         deliveryInstructions: instructions || undefined,
         paymentMethod,
-        promoCode: appliedPromo?.code,
+        promoCode: appliedPromoCode ?? undefined,
         idempotencyKey: idempotencyKey.current,
-        total,
+        total: totals?.total ?? 0,
       });
       return;
     }
@@ -121,17 +129,11 @@ export function CheckoutScreen() {
     createOrder.mutate(
       {
         idempotencyKey: idempotencyKey.current,
-        businessId,
-        items: items.map((i) => ({
-          productId: i.productId,
-          quantity: i.quantity,
-          addOnIds: i.addOnIds,
-          specialInstructions: i.specialInstructions,
-        })),
+        items: orderItems,
         addressId: effectiveAddressId,
         deliveryInstructions: instructions || undefined,
         paymentMethod,
-        promoCode: appliedPromo?.code,
+        promoCode: appliedPromoCode ?? undefined,
       },
       {
         onSuccess: (order) => {
@@ -260,34 +262,41 @@ export function CheckoutScreen() {
           </Pressable>
         </View>
         {promoMessage ? (
-          <Text className={`mb-4 font-body text-xs ${appliedPromo ? 'text-primary-700' : 'text-error'}`}>
+          <Text className={`mb-4 font-body text-xs ${appliedPromoCode ? 'text-primary-700' : 'text-error'}`}>
             {promoMessage}
           </Text>
         ) : null}
 
-        <View className="mb-6 gap-2 rounded-lg bg-white p-4">
-          <Text className="mb-1 font-heading text-base text-neutral-900">{businessName}</Text>
-          <View className="flex-row justify-between">
-            <Text className="font-body text-sm text-neutral-500">Subtotal</Text>
-            <Text className="font-body text-sm text-neutral-900">{formatK(sub)}</Text>
-          </View>
-          <View className="flex-row justify-between">
-            <Text className="font-body text-sm text-neutral-500">Delivery</Text>
-            <Text className="font-body text-sm text-neutral-900">{formatK(deliveryFee)}</Text>
-          </View>
-          <View className="flex-row justify-between">
-            <Text className="font-body text-sm text-neutral-500">Service fee</Text>
-            <Text className="font-body text-sm text-neutral-900">{formatK(ESTIMATED_SERVICE_FEE)}</Text>
-          </View>
-          {discount > 0 ? (
-            <View className="flex-row justify-between">
-              <Text className="font-body text-sm text-primary-700">Discount</Text>
-              <Text className="font-body text-sm text-primary-700">-{formatK(discount)}</Text>
+        <View className="mb-6 gap-3 rounded-lg bg-white p-4">
+          {stores.map((store) => (
+            <View key={store.businessId} className="flex-row items-center gap-2">
+              <Store size={14} color="#767B72" />
+              <Text className="flex-1 font-body text-sm text-neutral-700">{store.businessName}</Text>
             </View>
-          ) : null}
-          <View className="flex-row justify-between border-t border-neutral-100 pt-2">
-            <Text className="font-heading text-base text-neutral-900">Total</Text>
-            <Text className="font-heading text-base text-neutral-900">{formatK(total)}</Text>
+          ))}
+          <View className="gap-2 border-t border-neutral-100 pt-3">
+            <View className="flex-row justify-between">
+              <Text className="font-body text-sm text-neutral-500">Subtotal</Text>
+              <Text className="font-body text-sm text-neutral-900">{formatK(totals?.subtotal ?? 0)}</Text>
+            </View>
+            <View className="flex-row justify-between">
+              <Text className="font-body text-sm text-neutral-500">Delivery</Text>
+              {preview.isPending ? <ActivityIndicator size="small" color="#0E6E4E" /> : <Text className="font-body text-sm text-neutral-900">{formatK(totals?.deliveryFee ?? 0)}</Text>}
+            </View>
+            <View className="flex-row justify-between">
+              <Text className="font-body text-sm text-neutral-500">Service fee</Text>
+              <Text className="font-body text-sm text-neutral-900">{formatK(totals?.serviceFee ?? 0)}</Text>
+            </View>
+            {totals && totals.discount > 0 ? (
+              <View className="flex-row justify-between">
+                <Text className="font-body text-sm text-primary-700">Discount</Text>
+                <Text className="font-body text-sm text-primary-700">-{formatK(totals.discount)}</Text>
+              </View>
+            ) : null}
+            <View className="flex-row justify-between border-t border-neutral-100 pt-2">
+              <Text className="font-heading text-base text-neutral-900">Total</Text>
+              <Text className="font-heading text-base text-neutral-900">{formatK(totals?.total ?? 0)}</Text>
+            </View>
           </View>
         </View>
       </ScrollView>
@@ -297,7 +306,7 @@ export function CheckoutScreen() {
           label="Place Order"
           onPress={onPlaceOrder}
           loading={createOrder.isPending}
-          disabled={!effectiveAddressId}
+          disabled={!effectiveAddressId || !totals}
         />
       </View>
     </SafeAreaView>

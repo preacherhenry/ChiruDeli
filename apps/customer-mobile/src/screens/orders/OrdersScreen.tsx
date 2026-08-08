@@ -34,7 +34,9 @@ export function OrdersScreen() {
               className="mb-3 gap-2 rounded-lg bg-white p-4"
             >
               <View className="flex-row items-start justify-between">
-                <Text className="flex-1 font-body-semibold text-sm text-neutral-900">{item.businessName}</Text>
+                <Text className="flex-1 font-body-semibold text-sm text-neutral-900" numberOfLines={1}>
+                  {item.businessNames.join(', ')}
+                </Text>
                 <StatusBadge status={item.status} />
               </View>
               <Text className="font-body text-xs text-neutral-500" numberOfLines={1}>

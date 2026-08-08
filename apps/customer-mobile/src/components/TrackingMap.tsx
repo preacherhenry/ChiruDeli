@@ -9,15 +9,15 @@ import type { Coordinates } from '@chirudeli/shared-types';
  * crash or render a blank grey box, so the caller gates this out entirely.
  */
 export function TrackingMap({
-  business,
-  customer,
+  pickups,
+  dropoff,
   rider,
 }: {
-  business: Coordinates;
-  customer: Coordinates;
+  pickups: Array<{ location: Coordinates; label: string; completed: boolean }>;
+  dropoff: Coordinates;
   rider: Coordinates | null;
 }) {
-  const points = [business, customer, ...(rider ? [rider] : [])];
+  const points = [...pickups.map((p) => p.location), dropoff, ...(rider ? [rider] : [])];
   const latitudes = points.map((p) => p.latitude);
   const longitudes = points.map((p) => p.longitude);
   const region = {
@@ -30,10 +30,17 @@ export function TrackingMap({
   return (
     <View style={{ height: 220 }}>
       <MapView provider={PROVIDER_GOOGLE} style={{ flex: 1 }} region={region}>
-        <Marker coordinate={business} title="Pickup" pinColor="#0E6E4E" />
-        <Marker coordinate={customer} title="Delivery address" pinColor="#F4A425" />
+        {pickups.map((p, i) => (
+          <Marker
+            key={i}
+            coordinate={p.location}
+            title={p.label}
+            pinColor={p.completed ? '#9AA0A6' : '#0E6E4E'}
+          />
+        ))}
+        <Marker coordinate={dropoff} title="Delivery address" pinColor="#F4A425" />
         {rider ? <Marker coordinate={rider} title="Rider" pinColor="#2E7BD6" /> : null}
-        {rider ? <Polyline coordinates={[rider, customer]} strokeColor="#0E6E4E" strokeWidth={3} /> : null}
+        {rider ? <Polyline coordinates={[rider, dropoff]} strokeColor="#0E6E4E" strokeWidth={3} /> : null}
       </MapView>
     </View>
   );

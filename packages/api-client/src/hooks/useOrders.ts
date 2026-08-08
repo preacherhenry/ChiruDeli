@@ -1,6 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { CreateOrderInput, CancelOrderInput, SubmitReviewInput } from '@chirudeli/shared-types';
+import type {
+  CreateOrderInput,
+  PreviewOrderInput,
+  CancelOrderInput,
+  SubmitReviewInput,
+  SubmitRiderReviewInput,
+} from '@chirudeli/shared-types';
 import { useApiClient } from '../context';
+
+/** Recomputed on-demand (cart contents change, promo applied, ...) rather
+ * than kept as a background query. */
+export function usePreviewOrder() {
+  const client = useApiClient();
+  return useMutation({ mutationFn: (input: PreviewOrderInput) => client.orders.preview(input) });
+}
 
 export function useCreateOrder() {
   const client = useApiClient();
@@ -41,12 +54,25 @@ export function useCancelOrder() {
   });
 }
 
+/** Rates one store's business — a multi-store master order gets one call of
+ * this per store. */
 export function useSubmitReview() {
   const client = useApiClient();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, input }: { id: string; input: SubmitReviewInput }) =>
-      client.orders.review(id, input),
+      client.storeOrders.review(id, input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['order'] }),
+  });
+}
+
+/** Rates the rider — once per master order. */
+export function useSubmitRiderReview() {
+  const client = useApiClient();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, input }: { id: string; input: SubmitRiderReviewInput }) =>
+      client.orders.riderReview(id, input),
     onSuccess: (_res, vars) => qc.invalidateQueries({ queryKey: ['order', vars.id] }),
   });
 }

@@ -22,7 +22,6 @@ export type RootStackParamList = {
   Cart: undefined;
   Checkout: undefined;
   Payment: {
-    businessId: string;
     addressId: string;
     deliveryInstructions?: string;
     paymentMethod: 'MOBILE_MONEY' | 'CARD';

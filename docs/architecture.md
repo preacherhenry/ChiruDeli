@@ -49,11 +49,67 @@ fetch calls or duplicate validation rules.
   `rider:{riderId}` and `business:{businessId}` reserved for the rider/
   business apps' live request feeds (Phase 2), `admin:live` reserved for the
   admin live-ops view (Phase 3).
-- **Idempotency**: `Order.idempotencyKey` is a unique column. The client
-  generates a UUID once per checkout attempt and resends it on retry;
-  `POST /orders` looks the key up first and returns the existing order
+- **Idempotency**: `MasterOrder.idempotencyKey` is a unique column. The
+  client generates a UUID once per checkout attempt and resends it on retry;
+  `POST /orders` looks the key up first and returns the existing master order
   instead of creating a duplicate — this is what makes double-tapping
   "Place Order" or retrying after a dropped connection safe.
+
+### Multi-store cart & order splitting
+
+Customers never manage separate carts per store. `customer-mobile`'s
+`cartStore` holds one flat structure — `stores: { businessId, businessName,
+items }[]` — that items from any number of businesses accumulate into as the
+customer browses. Nothing about adding an item ever clears or blocks on a
+different store already being in the cart.
+
+Checkout submits every item (each carrying its own `businessId`) in one
+`POST /orders` call. The server groups them by business and, in a single
+transaction:
+
+```
+MasterOrder                          ← what the customer sees/pays/tracks
+  orderNumber e.g. "CD-260808-3UVQ"
+  idempotencyKey, paymentMethod, paymentStatus
+  subtotal / deliveryFee / serviceFee / discountAmount / total  (grand totals)
+  ├─ Order ("store order") × N       ← what each business's dashboard sees
+  │    orderNumber e.g. "CD-260808-3UVQ-01"
+  │    businessId, items, subtotal, own status (PENDING_CONFIRMATION…DELIVERED)
+  │    commissionPercent/commissionAmount/businessPayoutAmount (per store)
+  ├─ Payment                          ← one charge for the grand total
+  └─ MasterDelivery                   ← one rider, multi-stop route
+       └─ DeliveryStop × (N pickups + 1 dropoff)
+```
+
+A business only ever queries its own `Order` rows — a store order has no
+foreign key or join path back to another business's items, enforcing the
+"a store must never see another store's data" rule at the schema level, not
+just in application logic.
+
+**Derived status, not stored**: `MasterOrder` has no `status` column.
+`deriveOverallStatus()` (`orders.mapper.ts`) computes it from the store
+orders every time it's read — the least-advanced non-cancelled store order's
+status, or `DELIVERED`/`CANCELLED` once every store order agrees. This keeps
+"what does the customer see" always consistent with the individual stores'
+real progress without a separate field that could drift out of sync.
+
+**Delivery fee**: `calculateMultiStoreDeliveryFee` (`lib/fees.ts`) starts
+from the normal zone/distance fee to the customer's address and adds a flat
+`MULTI_STORE_SURCHARGE_PER_EXTRA_STORE` (K10) per store beyond the first —
+covers the rider's extra stops without customers doing per-store math.
+
+**Pickup sequencing**: `sequencePickupStops` (`lib/fees.ts`) orders the
+pickup stops **farthest-from-destination first**, so the rider's route
+naturally converges toward the customer rather than zig-zagging. The
+resulting `DeliveryStop` rows (`type: PICKUP`, one per store order, plus a
+final `type: DROPOFF`) are strictly sequential — `completeDeliveryStop`
+rejects completing a stop out of order, and completing the last pickup is
+what allows the dropoff stop to be completed at all.
+
+**Reviews**: one `Review` per store order (rates that business only) plus a
+single rider rating on the `MasterOrder` itself — the rider handled every
+pickup and the final delivery regardless of how many stores were involved,
+so there's no sense rating them per-store.
 
 ### Delivery fee & commission engine
 
@@ -100,10 +156,12 @@ and broadcasts `order.status_changed` over Socket.io. Customer-initiated
 cancellation is further restricted to `PENDING_CONFIRMATION`/`CONFIRMED`
 (`canCustomerCancel`) — a configurable window, not a hardcoded rule.
 
-`Delivery.status` (rider-side, finer-grained, matches spec §13):
-`ASSIGNED → EN_ROUTE_TO_PICKUP → ARRIVED_AT_PICKUP → PICKED_UP →
-EN_ROUTE_TO_DROPOFF → ARRIVED_AT_DROPOFF → COMPLETED`, with a `deliveryPin`
-required at handoff.
+`MasterDelivery.status` (rider-side, one row per master order):
+`ASSIGNED → IN_PROGRESS → COMPLETED`. The finer-grained progress lives on its
+`DeliveryStop` rows instead — `DeliveryStopStatus`: `PENDING → ARRIVED →
+COMPLETED`, walked strictly in `sequence` order (see "Multi-store cart &
+order splitting" above). A `deliveryPin` on `MasterDelivery` is required at
+the final dropoff.
 
 `PaymentStatus` (`UNPAID/PENDING/PAID/FAILED/REFUNDED`) is a fully separate
 field from both of the above — a `CASH_ON_DELIVERY` order can be
@@ -212,10 +270,13 @@ Dashboard (sidebar layout):
 - Delivery fees are calculated automatically from zone + distance; the
   `Order.deliveryFeeOverridden` flag and `AuditLog` exist for the admin
   override path (Phase 3).
-- Completed (`DELIVERED`) or `CANCELLED` orders have no further status
+- Completed (`DELIVERED`) or `CANCELLED` store orders have no further status
   transitions available — the state machine has no outgoing edges from
   either.
 - Payment status is tracked independently of delivery status.
-- Duplicate order submissions are prevented by `idempotencyKey`.
+- Duplicate order submissions are prevented by `MasterOrder.idempotencyKey`.
+- Cancelling a master order requires every one of its store orders to still
+  be in a cancellable state (`PENDING_CONFIRMATION`/`CONFIRMED`) — one
+  business already preparing food blocks cancellation of the whole order.
 - Every state-changing action that matters (order placed, order cancelled,
   customer registered) writes an `AuditLog` row via `recordAudit()`.

@@ -59,17 +59,16 @@ export const OrderStatus = makeEnum([
 ] as const);
 export type OrderStatus = z.infer<typeof OrderStatus.schema>;
 
-/** Fine-grained rider-side delivery workflow (spec section 13). */
-export const DeliveryStatus = makeEnum([
-  'ASSIGNED',
-  'EN_ROUTE_TO_PICKUP',
-  'ARRIVED_AT_PICKUP',
-  'PICKED_UP',
-  'EN_ROUTE_TO_DROPOFF',
-  'ARRIVED_AT_DROPOFF',
-  'COMPLETED',
-] as const);
-export type DeliveryStatus = z.infer<typeof DeliveryStatus.schema>;
+/** Overall progress of a rider's multi-stop delivery run (spec section 13). */
+export const MasterDeliveryStatus = makeEnum(['ASSIGNED', 'IN_PROGRESS', 'COMPLETED'] as const);
+export type MasterDeliveryStatus = z.infer<typeof MasterDeliveryStatus.schema>;
+
+/** One PICKUP per store visited, plus a final DROPOFF at the customer. */
+export const DeliveryStopType = makeEnum(['PICKUP', 'DROPOFF'] as const);
+export type DeliveryStopType = z.infer<typeof DeliveryStopType.schema>;
+
+export const DeliveryStopStatus = makeEnum(['PENDING', 'ARRIVED', 'COMPLETED'] as const);
+export type DeliveryStopStatus = z.infer<typeof DeliveryStopStatus.schema>;
 
 /** Deliberately separate from OrderStatus/DeliveryStatus — see business rule #13. */
 export const PaymentStatus = makeEnum(['UNPAID', 'PENDING', 'PAID', 'FAILED', 'REFUNDED'] as const);

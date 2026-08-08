@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { View, Text, ScrollView, Pressable, TextInput, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ChevronLeft } from 'lucide-react-native';
-import { useOrder, useCancelOrder, useSubmitReview, useProducts } from '@chirudeli/api-client';
+import { ChevronLeft, Store } from 'lucide-react-native';
+import { useOrder, useCancelOrder, useSubmitReview, useSubmitRiderReview, useApiClient } from '@chirudeli/api-client';
 import { useAppNavigation, useAppRoute } from '../../navigation/useAppNavigation';
 import { useCartStore } from '../../state/cartStore';
 import { Button } from '../../components/Button';
@@ -20,35 +20,42 @@ export function OrderDetailsScreen() {
   const order = useOrder(params.orderId);
   const cancelOrder = useCancelOrder();
   const submitReview = useSubmitReview();
+  const submitRiderReview = useSubmitRiderReview();
   const addItem = useCartStore((s) => s.addItem);
-  const replaceCart = useCartStore((s) => s.replaceCart);
-  const products = useProducts(order.data?.businessId);
+  const apiClient = useApiClient();
 
-  const [businessRating, setBusinessRating] = useState(0);
+  const [businessRatings, setBusinessRatings] = useState<Record<string, number>>({});
+  const [businessComments, setBusinessComments] = useState<Record<string, string>>({});
   const [riderRating, setRiderRating] = useState(0);
-  const [comment, setComment] = useState('');
+  const [riderComment, setRiderComment] = useState('');
+  const [reordering, setReordering] = useState(false);
 
   if (order.isLoading || !order.data) return <LoadingState />;
   const o = order.data;
 
-  const onOrderAgain = () => {
-    if (!products.data) return;
+  const onOrderAgain = async () => {
+    setReordering(true);
     let addedCount = 0;
-    for (const item of o.items) {
-      const product = products.data.find((p) => p.id === item.productId);
-      if (!product || !product.isAvailable) continue;
-      const cartItem = {
-        productId: product.id,
-        name: product.name,
-        unitPrice: product.price,
-        imageUrl: product.imageUrl,
-        quantity: item.quantity,
-        addOnIds: [],
-        specialInstructions: item.specialInstructions,
-      };
-      if (addedCount === 0) replaceCart(o.businessId, o.businessName, cartItem);
-      else addItem(o.businessId, o.businessName, cartItem);
-      addedCount++;
+    try {
+      for (const storeOrder of o.storeOrders) {
+        const products = await apiClient.businesses.products(storeOrder.businessId);
+        for (const item of storeOrder.items) {
+          const product = products.find((p) => p.id === item.productId);
+          if (!product || !product.isAvailable) continue;
+          addItem(storeOrder.businessId, storeOrder.businessName, {
+            productId: product.id,
+            name: product.name,
+            unitPrice: product.price,
+            imageUrl: product.imageUrl,
+            quantity: item.quantity,
+            addOnIds: [],
+            specialInstructions: item.specialInstructions,
+          });
+          addedCount++;
+        }
+      }
+    } finally {
+      setReordering(false);
     }
     if (addedCount === 0) {
       Alert.alert('Unavailable', 'None of these items are available right now.');
@@ -68,20 +75,28 @@ export function OrderDetailsScreen() {
     ]);
   };
 
-  const onSubmitReview = () => {
-    if (businessRating === 0) {
-      Alert.alert('Rating required', 'Please rate the business first.');
+  const onSubmitStoreReview = (storeOrderId: string) => {
+    const rating = businessRatings[storeOrderId] ?? 0;
+    if (rating === 0) {
+      Alert.alert('Rating required', 'Please rate this business first.');
       return;
     }
     submitReview.mutate({
-      id: o.id,
-      input: {
-        businessRating,
-        businessComment: comment || undefined,
-        riderRating: o.rider ? riderRating || undefined : undefined,
-      },
+      id: storeOrderId,
+      input: { businessRating: rating, businessComment: businessComments[storeOrderId] || undefined },
     });
   };
+
+  const onSubmitRiderReview = () => {
+    if (riderRating === 0) {
+      Alert.alert('Rating required', 'Please rate the rider first.');
+      return;
+    }
+    submitRiderReview.mutate({ id: o.id, input: { riderRating, riderComment: riderComment || undefined } });
+  };
+
+  const pendingStoreReviews = o.storeOrders.filter((so) => so.status === 'DELIVERED' && !so.hasReview);
+  const canReviewRider = o.status === 'DELIVERED' && o.rider && o.riderRating == null;
 
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top', 'left', 'right']}>
@@ -94,66 +109,92 @@ export function OrderDetailsScreen() {
       </View>
 
       <ScrollView className="flex-1 px-4">
-        <Text className="mb-2 font-heading text-base text-neutral-900">{o.businessName}</Text>
-        <View className="mb-4 gap-2 rounded-lg bg-white p-4">
-          {o.items.map((item) => (
-            <View key={item.id} className="flex-row justify-between">
-              <Text className="flex-1 font-body text-sm text-neutral-800">
-                {item.nameSnapshot} × {item.quantity}
-              </Text>
-              <Text className="font-body text-sm text-neutral-900">{formatK(item.lineTotal)}</Text>
-            </View>
-          ))}
-          <View className="mt-1 gap-1 border-t border-neutral-100 pt-2">
-            <View className="flex-row justify-between">
-              <Text className="font-body text-xs text-neutral-500">Subtotal</Text>
-              <Text className="font-body text-xs text-neutral-700">{formatK(o.totals.subtotal)}</Text>
-            </View>
-            <View className="flex-row justify-between">
-              <Text className="font-body text-xs text-neutral-500">Delivery</Text>
-              <Text className="font-body text-xs text-neutral-700">{formatK(o.totals.deliveryFee)}</Text>
-            </View>
-            <View className="flex-row justify-between">
-              <Text className="font-body text-xs text-neutral-500">Service fee</Text>
-              <Text className="font-body text-xs text-neutral-700">{formatK(o.totals.serviceFee)}</Text>
-            </View>
-            {o.totals.discount > 0 ? (
-              <View className="flex-row justify-between">
-                <Text className="font-body text-xs text-primary-700">Discount</Text>
-                <Text className="font-body text-xs text-primary-700">-{formatK(o.totals.discount)}</Text>
+        {o.storeOrders.map((storeOrder) => (
+          <View key={storeOrder.id} className="mb-4 gap-2 rounded-lg bg-white p-4">
+            <View className="flex-row items-center justify-between">
+              <View className="flex-row items-center gap-2">
+                <Store size={15} color="#0E6E4E" />
+                <Text className="font-heading text-base text-neutral-900">{storeOrder.businessName}</Text>
               </View>
-            ) : null}
-            <View className="flex-row justify-between pt-1">
-              <Text className="font-heading text-sm text-neutral-900">Total</Text>
-              <Text className="font-heading text-sm text-neutral-900">{formatK(o.totals.total)}</Text>
+              <StatusBadge status={storeOrder.status} />
             </View>
+            {storeOrder.items.map((item) => (
+              <View key={item.id} className="flex-row justify-between">
+                <Text className="flex-1 font-body text-sm text-neutral-800">
+                  {item.nameSnapshot} × {item.quantity}
+                </Text>
+                <Text className="font-body text-sm text-neutral-900">{formatK(item.lineTotal)}</Text>
+              </View>
+            ))}
+            <View className="flex-row justify-between border-t border-neutral-100 pt-2">
+              <Text className="font-body-semibold text-xs text-neutral-500">Store subtotal</Text>
+              <Text className="font-body-semibold text-xs text-neutral-700">{formatK(storeOrder.subtotal)}</Text>
+            </View>
+          </View>
+        ))}
+
+        <View className="mb-4 gap-1 rounded-lg bg-white p-4">
+          <View className="flex-row justify-between">
+            <Text className="font-body text-xs text-neutral-500">Subtotal</Text>
+            <Text className="font-body text-xs text-neutral-700">{formatK(o.totals.subtotal)}</Text>
+          </View>
+          <View className="flex-row justify-between">
+            <Text className="font-body text-xs text-neutral-500">Delivery</Text>
+            <Text className="font-body text-xs text-neutral-700">{formatK(o.totals.deliveryFee)}</Text>
+          </View>
+          <View className="flex-row justify-between">
+            <Text className="font-body text-xs text-neutral-500">Service fee</Text>
+            <Text className="font-body text-xs text-neutral-700">{formatK(o.totals.serviceFee)}</Text>
+          </View>
+          {o.totals.discount > 0 ? (
+            <View className="flex-row justify-between">
+              <Text className="font-body text-xs text-primary-700">Discount</Text>
+              <Text className="font-body text-xs text-primary-700">-{formatK(o.totals.discount)}</Text>
+            </View>
+          ) : null}
+          <View className="flex-row justify-between pt-1">
+            <Text className="font-heading text-sm text-neutral-900">Total</Text>
+            <Text className="font-heading text-sm text-neutral-900">{formatK(o.totals.total)}</Text>
           </View>
         </View>
 
-        {o.status === 'DELIVERED' && !o.hasReview ? (
-          <View className="mb-6 gap-3 rounded-lg bg-white p-4">
+        {pendingStoreReviews.length > 0 ? (
+          <View className="mb-4 gap-4 rounded-lg bg-white p-4">
             <Text className="font-heading text-base text-neutral-900">Rate your order</Text>
-            <View className="gap-1">
-              <Text className="font-body text-sm text-neutral-600">{o.businessName}</Text>
-              <StarRatingInput value={businessRating} onChange={setBusinessRating} />
-            </View>
-            {o.rider ? (
-              <View className="gap-1">
-                <Text className="font-body text-sm text-neutral-600">{o.rider.fullName} (rider)</Text>
-                <StarRatingInput value={riderRating} onChange={setRiderRating} />
+            {pendingStoreReviews.map((storeOrder) => (
+              <View key={storeOrder.id} className="gap-2 border-t border-neutral-100 pt-3 first:border-t-0 first:pt-0">
+                <Text className="font-body text-sm text-neutral-600">{storeOrder.businessName}</Text>
+                <StarRatingInput
+                  value={businessRatings[storeOrder.id] ?? 0}
+                  onChange={(v) => setBusinessRatings((s) => ({ ...s, [storeOrder.id]: v }))}
+                />
+                <TextInput
+                  value={businessComments[storeOrder.id] ?? ''}
+                  onChangeText={(v) => setBusinessComments((s) => ({ ...s, [storeOrder.id]: v }))}
+                  placeholder="Leave a comment (optional)"
+                  multiline
+                  className="min-h-[50px] rounded-lg border border-neutral-200 p-3 font-body text-sm text-neutral-900"
+                />
+                <Button label="Submit review" onPress={() => onSubmitStoreReview(storeOrder.id)} loading={submitReview.isPending} />
               </View>
-            ) : null}
+            ))}
+          </View>
+        ) : null}
+
+        {canReviewRider ? (
+          <View className="mb-6 gap-3 rounded-lg bg-white p-4">
+            <Text className="font-heading text-base text-neutral-900">Rate your rider</Text>
+            <Text className="font-body text-sm text-neutral-600">{o.rider?.fullName}</Text>
+            <StarRatingInput value={riderRating} onChange={setRiderRating} />
             <TextInput
-              value={comment}
-              onChangeText={setComment}
+              value={riderComment}
+              onChangeText={setRiderComment}
               placeholder="Leave a comment (optional)"
               multiline
               className="min-h-[60px] rounded-lg border border-neutral-200 p-3 font-body text-sm text-neutral-900"
             />
-            <Button label="Submit review" onPress={onSubmitReview} loading={submitReview.isPending} />
+            <Button label="Submit review" onPress={onSubmitRiderReview} loading={submitRiderReview.isPending} />
           </View>
-        ) : o.hasReview ? (
-          <Text className="mb-6 font-body text-sm text-neutral-400">Thanks — you already reviewed this order.</Text>
         ) : null}
       </ScrollView>
 
@@ -161,7 +202,7 @@ export function OrderDetailsScreen() {
         {ACTIVE_STATUSES.includes(o.status) ? (
           <Button label="Track order" onPress={() => navigation.navigate('LiveTracking', { orderId: o.id })} />
         ) : (
-          <Button label="Order Again" onPress={onOrderAgain} />
+          <Button label="Order Again" onPress={onOrderAgain} loading={reordering} />
         )}
         {CANCELLABLE_STATUSES.includes(o.status) ? (
           <Button label="Cancel order" variant="ghost" onPress={onCancel} loading={cancelOrder.isPending} />

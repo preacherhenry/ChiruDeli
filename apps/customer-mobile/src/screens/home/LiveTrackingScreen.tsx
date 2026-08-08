@@ -1,35 +1,14 @@
 import { useEffect, useState } from 'react';
 import { View, Text, Pressable, Linking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ChevronLeft, Phone, MessageCircle, Star } from 'lucide-react-native';
+import { ChevronLeft, Phone, MessageCircle, Star, Store, Home, Check } from 'lucide-react-native';
 import { useOrder, subscribeToOrderTracking, useApiClient } from '@chirudeli/api-client';
-import type { OrderStatus, Coordinates } from '@chirudeli/shared-types';
+import type { OrderStatus, Coordinates, DeliveryStop } from '@chirudeli/shared-types';
 import { useAppNavigation, useAppRoute } from '../../navigation/useAppNavigation';
 import { LoadingState } from '../../components/LoadingState';
 import { StatusBadge } from '../../components/StatusBadge';
 import { WS_URL, GOOGLE_MAPS_API_KEY } from '../../lib/apiClient';
 import { TrackingMap } from '../../components/TrackingMap';
-
-const TIMELINE: OrderStatus[] = [
-  'CONFIRMED',
-  'PREPARING',
-  'RIDER_ASSIGNED',
-  'PICKED_UP',
-  'ON_THE_WAY',
-  'DELIVERED',
-];
-
-const TIMELINE_LABELS: Record<OrderStatus, string> = {
-  PENDING_CONFIRMATION: 'Order Placed',
-  CONFIRMED: 'Order Confirmed',
-  PREPARING: 'Business Preparing Order',
-  READY_FOR_PICKUP: 'Ready for Pickup',
-  RIDER_ASSIGNED: 'Rider Assigned',
-  PICKED_UP: 'Rider Picking Up Order',
-  ON_THE_WAY: 'Rider On The Way',
-  DELIVERED: 'Delivered',
-  CANCELLED: 'Cancelled',
-};
 
 export function LiveTrackingScreen() {
   const navigation = useAppNavigation();
@@ -38,6 +17,7 @@ export function LiveTrackingScreen() {
   const apiClient = useApiClient();
 
   const [liveStatus, setLiveStatus] = useState<OrderStatus | null>(null);
+  const [liveStops, setLiveStops] = useState<DeliveryStop[] | null>(null);
   const [riderLocation, setRiderLocation] = useState<Coordinates | null>(null);
   const [eta, setEta] = useState<number | null>(null);
 
@@ -49,6 +29,7 @@ export function LiveTrackingScreen() {
         onStatusChanged: (event) => {
           setLiveStatus(event.status);
           setEta(event.estimatedArrivalMinutes);
+          setLiveStops(event.deliveryStops);
           if (event.rider?.location) setRiderLocation(event.rider.location);
         },
         onLocationUpdated: (event) => setRiderLocation(event.location),
@@ -62,7 +43,9 @@ export function LiveTrackingScreen() {
 
   const status = liveStatus ?? order.data.status;
   const rider = order.data.rider;
-  const currentIndex = TIMELINE.indexOf(status);
+  const stops = [...(liveStops ?? order.data.deliveryStops)].sort((a, b) => a.sequence - b.sequence);
+  const pickupStops = stops.filter((s) => s.type === 'PICKUP');
+  const dropoffStop = stops.find((s) => s.type === 'DROPOFF');
 
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top', 'left', 'right']}>
@@ -72,15 +55,17 @@ export function LiveTrackingScreen() {
         </Pressable>
         <View className="flex-1">
           <Text className="font-heading text-lg text-neutral-900">Order #{order.data.orderNumber}</Text>
-          <Text className="font-body text-xs text-neutral-500">{order.data.businessName}</Text>
+          <Text className="font-body text-xs text-neutral-500">
+            {order.data.storeOrders.map((s) => s.businessName).join(', ')}
+          </Text>
         </View>
         <StatusBadge status={status} />
       </View>
 
-      {GOOGLE_MAPS_API_KEY ? (
+      {GOOGLE_MAPS_API_KEY && dropoffStop ? (
         <TrackingMap
-          business={order.data.businessLocation}
-          customer={order.data.address}
+          pickups={pickupStops.map((s) => ({ location: s.location, label: s.label, completed: s.status === 'COMPLETED' }))}
+          dropoff={dropoffStop.location}
           rider={riderLocation}
         />
       ) : null}
@@ -94,22 +79,30 @@ export function LiveTrackingScreen() {
 
         {status === 'CANCELLED' ? (
           <Text className="font-body text-sm text-error">This order was cancelled.</Text>
-        ) : (
+        ) : rider ? (
           <View className="gap-4">
-            {TIMELINE.map((step, index) => {
-              const done = currentIndex >= index;
+            {stops.map((stop) => {
+              const done = stop.status === 'COMPLETED';
+              const active = stop.status === 'ARRIVED';
+              const Icon = stop.type === 'PICKUP' ? Store : Home;
               return (
-                <View key={step} className="flex-row items-center gap-3">
+                <View key={stop.id} className="flex-row items-center gap-3">
                   <View
-                    className={`h-3 w-3 rounded-full ${done ? 'bg-primary-600' : 'bg-neutral-200'}`}
-                  />
-                  <Text className={`font-body text-sm ${done ? 'text-neutral-900' : 'text-neutral-400'}`}>
-                    {TIMELINE_LABELS[step]}
+                    className={`h-7 w-7 items-center justify-center rounded-full ${done ? 'bg-primary-600' : active ? 'bg-secondary-500' : 'bg-neutral-200'}`}
+                  >
+                    {done ? <Check size={14} color="#FFFFFF" /> : <Icon size={14} color={active ? '#1F2328' : '#767B72'} />}
+                  </View>
+                  <Text className={`font-body text-sm ${done || active ? 'text-neutral-900' : 'text-neutral-400'}`}>
+                    {stop.type === 'PICKUP' ? `Pickup: ${stop.label}` : `Deliver to ${stop.label}`}
                   </Text>
                 </View>
               );
             })}
           </View>
+        ) : (
+          <Text className="font-body text-sm text-neutral-500">
+            Waiting for a rider to be assigned — your route will appear here once one accepts.
+          </Text>
         )}
 
         {rider ? (

@@ -18,7 +18,7 @@ import { formatK } from '../../lib/money';
 export function PaymentScreen() {
   const navigation = useAppNavigation();
   const { params } = useAppRoute<'Payment'>();
-  const { items, clearCart } = useCartStore();
+  const { stores, clearCart } = useCartStore();
   const createOrder = useCreateOrder();
   const [error, setError] = useState<string | null>(null);
   const Icon = params.paymentMethod === 'MOBILE_MONEY' ? Smartphone : CreditCard;
@@ -28,13 +28,15 @@ export function PaymentScreen() {
       createOrder.mutate(
         {
           idempotencyKey: params.idempotencyKey,
-          businessId: params.businessId,
-          items: items.map((i) => ({
-            productId: i.productId,
-            quantity: i.quantity,
-            addOnIds: i.addOnIds,
-            specialInstructions: i.specialInstructions,
-          })),
+          items: stores.flatMap((store) =>
+            store.items.map((i) => ({
+              businessId: store.businessId,
+              productId: i.productId,
+              quantity: i.quantity,
+              addOnIds: i.addOnIds,
+              specialInstructions: i.specialInstructions,
+            })),
+          ),
           addressId: params.addressId,
           deliveryInstructions: params.deliveryInstructions,
           paymentMethod: params.paymentMethod,

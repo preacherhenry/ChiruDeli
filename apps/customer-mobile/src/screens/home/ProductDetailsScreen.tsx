@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { View, Text, ScrollView, Image, Pressable, TextInput, Alert } from 'react-native';
+import { View, Text, ScrollView, Image, Pressable, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ChevronLeft, Minus, Plus, Check } from 'lucide-react-native';
 import { useBusiness, useProducts } from '@chirudeli/api-client';
@@ -20,7 +20,6 @@ export function ProductDetailsScreen() {
   const [selectedAddOns, setSelectedAddOns] = useState<string[]>([]);
   const [instructions, setInstructions] = useState('');
   const addItem = useCartStore((s) => s.addItem);
-  const replaceCart = useCartStore((s) => s.replaceCart);
 
   const addOnsTotal = useMemo(() => {
     if (!product) return 0;
@@ -52,25 +51,7 @@ export function ProductDetailsScreen() {
       specialInstructions: instructions || undefined,
     };
 
-    const added = addItem(params.businessId, business.data.name, item);
-    if (!added) {
-      Alert.alert(
-        'Start a new cart?',
-        `Your cart has items from another business. Adding this item will clear it and start a new order from ${business.data.name}.`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Start new cart',
-            style: 'destructive',
-            onPress: () => {
-              replaceCart(params.businessId, business.data!.name, item);
-              navigation.goBack();
-            },
-          },
-        ],
-      );
-      return;
-    }
+    addItem(params.businessId, business.data.name, item);
     navigation.goBack();
   };
 

@@ -1,54 +1,70 @@
 import type { Prisma } from '@prisma/client';
+import type { OrderStatus } from '@chirudeli/shared-types';
 import { prisma } from '../../lib/prisma';
 
-export const orderInclude = {
-  business: true,
+export const masterOrderInclude = {
   address: true,
-  items: { include: { product: true } },
-  rider: {
+  storeOrders: {
     include: {
-      user: true,
+      business: true,
+      items: { include: { product: true } },
+      statusEvents: { orderBy: { changedAt: 'asc' as const } },
+      review: true,
+    },
+    orderBy: { sequence: 'asc' as const },
+  },
+  delivery: {
+    include: {
+      rider: { include: { user: true } },
+      stops: { orderBy: { sequence: 'asc' as const } },
       locationPings: { orderBy: { recordedAt: 'desc' as const }, take: 1 },
     },
   },
-  delivery: true,
   payment: true,
-  review: true,
-  statusEvents: { orderBy: { changedAt: 'asc' as const } },
-} satisfies Prisma.OrderInclude;
+} satisfies Prisma.MasterOrderInclude;
 
-export type OrderWithRelations = Prisma.OrderGetPayload<{ include: typeof orderInclude }>;
+export type MasterOrderWithRelations = Prisma.MasterOrderGetPayload<{ include: typeof masterOrderInclude }>;
+type StoreOrderWithRelations = MasterOrderWithRelations['storeOrders'][number];
 
-export async function loadOrder(id: string): Promise<OrderWithRelations | null> {
-  return prisma.order.findUnique({ where: { id }, include: orderInclude });
+export async function loadMasterOrder(id: string): Promise<MasterOrderWithRelations | null> {
+  return prisma.masterOrder.findUnique({ where: { id }, include: masterOrderInclude });
 }
 
-function estimateArrivalMinutes(order: OrderWithRelations): number | null {
-  if (!order.delivery) return null;
-  switch (order.status) {
-    case 'RIDER_ASSIGNED':
-      return Math.max(5, Math.round(order.delivery.distanceKm * 3) + 8);
-    case 'PICKED_UP':
-    case 'ON_THE_WAY':
-      return Math.max(2, Math.round(order.delivery.distanceKm * 2.5));
-    default:
-      return null;
+/// Least-advanced non-cancelled store order status "gates" the whole master
+/// order — it isn't DELIVERED until every store's items have arrived, and a
+/// single cancelled store shouldn't hide the others' real progress.
+const STATUS_PROGRESSION: OrderStatus[] = [
+  'PENDING_CONFIRMATION',
+  'CONFIRMED',
+  'PREPARING',
+  'READY_FOR_PICKUP',
+  'RIDER_ASSIGNED',
+  'PICKED_UP',
+  'ON_THE_WAY',
+  'DELIVERED',
+];
+
+export function deriveOverallStatus(storeOrders: Array<{ status: OrderStatus }>): OrderStatus {
+  const active = storeOrders.filter((o) => o.status !== 'CANCELLED');
+  if (active.length === 0) return 'CANCELLED';
+  if (active.every((o) => o.status === 'DELIVERED')) return 'DELIVERED';
+
+  let least = active[0]!.status;
+  for (const o of active) {
+    if (STATUS_PROGRESSION.indexOf(o.status) < STATUS_PROGRESSION.indexOf(least)) least = o.status;
   }
+  return least;
 }
 
-export function mapOrderToDto(order: OrderWithRelations) {
-  const latestPing = order.rider?.locationPings[0];
-
+function mapStoreOrderToDto(order: StoreOrderWithRelations) {
   return {
     id: order.id,
     orderNumber: order.orderNumber,
+    sequence: order.sequence,
     businessId: order.businessId,
     businessName: order.business.name,
     businessLocation: { latitude: order.business.latitude, longitude: order.business.longitude },
     status: order.status,
-    deliveryStatus: order.delivery?.status ?? null,
-    paymentStatus: order.paymentStatus,
-    paymentMethod: order.paymentMethod,
     items: order.items.map((item) => ({
       id: item.id,
       productId: item.productId,
@@ -60,6 +76,32 @@ export function mapOrderToDto(order: OrderWithRelations) {
       lineTotal:
         Number(item.priceSnapshot) * item.quantity + Number(item.addOnsPriceSnapshot) * item.quantity,
     })),
+    subtotal: Number(order.subtotal),
+    statusHistory: order.statusEvents.map((e) => ({ status: e.status, changedAt: e.changedAt.toISOString() })),
+    hasReview: order.review != null,
+  };
+}
+
+function estimateArrivalMinutes(order: MasterOrderWithRelations): number | null {
+  const delivery = order.delivery;
+  if (!delivery || delivery.status === 'COMPLETED') return null;
+  const remainingStops = delivery.stops.filter((s) => s.status !== 'COMPLETED').length;
+  if (remainingStops === 0) return null;
+  return Math.max(3, remainingStops * 8);
+}
+
+export function mapMasterOrderToDto(order: MasterOrderWithRelations) {
+  const delivery = order.delivery;
+  const latestPing = delivery?.locationPings[0];
+  const rider = delivery?.rider;
+
+  return {
+    id: order.id,
+    orderNumber: order.orderNumber,
+    status: deriveOverallStatus(order.storeOrders),
+    paymentStatus: order.paymentStatus,
+    paymentMethod: order.paymentMethod,
+    storeOrders: order.storeOrders.map(mapStoreOrderToDto),
     totals: {
       subtotal: Number(order.subtotal),
       deliveryFee: Number(order.deliveryFee),
@@ -78,39 +120,47 @@ export function mapOrderToDto(order: OrderWithRelations) {
       isDefault: order.address.isDefault,
     },
     deliveryInstructions: order.deliveryInstructions ?? undefined,
-    rider: order.rider
+    rider: rider
       ? {
-          id: order.rider.id,
-          fullName: order.rider.fullName,
-          photoUrl: order.rider.profilePhotoUrl,
-          vehicleType: order.rider.vehicleType,
-          ratingAvg: order.rider.ratingAvg,
-          phone: order.rider.user.phone,
+          id: rider.id,
+          fullName: rider.fullName,
+          photoUrl: rider.profilePhotoUrl,
+          vehicleType: rider.vehicleType,
+          ratingAvg: rider.ratingAvg,
+          phone: rider.user.phone,
           location: latestPing
             ? { latitude: latestPing.latitude, longitude: latestPing.longitude }
-            : order.rider.currentLatitude != null && order.rider.currentLongitude != null
-              ? { latitude: order.rider.currentLatitude, longitude: order.rider.currentLongitude }
+            : rider.currentLatitude != null && rider.currentLongitude != null
+              ? { latitude: rider.currentLatitude, longitude: rider.currentLongitude }
               : null,
         }
       : null,
     estimatedArrivalMinutes: estimateArrivalMinutes(order),
-    statusHistory: order.statusEvents.map((e) => ({
-      status: e.status,
-      changedAt: e.changedAt.toISOString(),
+    deliveryStops: (delivery?.stops ?? []).map((stop) => ({
+      id: stop.id,
+      sequence: stop.sequence,
+      type: stop.type,
+      label: stop.label,
+      location: { latitude: stop.latitude, longitude: stop.longitude },
+      status: stop.status,
+      storeOrderId: stop.storeOrderId,
     })),
+    deliveryPin: delivery?.deliveryPin,
+    riderRating: order.riderRating,
+    riderComment: order.riderComment,
     placedAt: order.placedAt.toISOString(),
-    deliveryPin: order.delivery?.deliveryPin,
-    hasReview: order.review != null,
   };
 }
 
-export function mapOrderToSummary(order: OrderWithRelations) {
+export function mapMasterOrderToSummary(order: MasterOrderWithRelations) {
   return {
     id: order.id,
     orderNumber: order.orderNumber,
-    businessName: order.business.name,
-    status: order.status,
-    itemsSummary: order.items.map((i) => `${i.nameSnapshot} x${i.quantity}`).join(', '),
+    businessNames: order.storeOrders.map((so) => so.business.name),
+    status: deriveOverallStatus(order.storeOrders),
+    itemsSummary: order.storeOrders
+      .flatMap((so) => so.items.map((i) => `${i.nameSnapshot} x${i.quantity}`))
+      .join(', '),
     total: Number(order.total),
     placedAt: order.placedAt.toISOString(),
   };

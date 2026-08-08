@@ -4,36 +4,38 @@ import { parseOrThrow } from '../../lib/validate';
 import { prisma } from '../../lib/prisma';
 import * as ordersService from '../orders/orders.service';
 
-const advanceBodySchema = z.object({
-  toStatus: z.enum(['CONFIRMED', 'PREPARING', 'READY_FOR_PICKUP', 'PICKED_UP', 'ON_THE_WAY', 'DELIVERED']),
-});
+const advanceBodySchema = z.object({ toStatus: z.enum(['CONFIRMED', 'PREPARING', 'READY_FOR_PICKUP']) });
 const assignRiderBodySchema = z.object({ riderId: z.string().uuid() });
 const pingBodySchema = z.object({ latitude: z.number(), longitude: z.number(), riderId: z.string().uuid() });
 
 /**
  * Dev-only harness so `scripts/simulate-order-progress.ts` can drive a real
- * order through the full status workflow — and trigger real Socket.io
- * broadcasts from THIS running server process — without the rider/business
- * apps existing yet. Not part of the public product API surface (see
- * docs/roadmap.md); business/rider dashboards will replace these with
- * properly role-gated endpoints.
+ * (possibly multi-store) order through the full workflow — and trigger real
+ * Socket.io broadcasts from THIS running server process — without the
+ * rider/business apps existing yet. Not part of the public product API
+ * surface (see docs/roadmap.md); business/rider dashboards will replace
+ * these with properly role-gated endpoints.
  */
 export async function devRoutes(app: FastifyInstance) {
   if (process.env.NODE_ENV === 'production') return;
 
-  app.post<{ Params: { id: string } }>('/dev/orders/:id/advance', async (req) => {
+  app.post<{ Params: { storeOrderId: string } }>('/dev/store-orders/:storeOrderId/advance', async (req) => {
     const body = parseOrThrow(advanceBodySchema, req.body);
-    return ordersService.advanceOrderStatus(req.params.id, body.toStatus);
+    return ordersService.advanceStoreOrderStatus(req.params.storeOrderId, body.toStatus);
   });
 
-  app.post<{ Params: { id: string } }>('/dev/orders/:id/assign-rider', async (req) => {
+  app.post<{ Params: { id: string } }>('/dev/master-orders/:id/assign-rider', async (req) => {
     const body = parseOrThrow(assignRiderBodySchema, req.body);
-    return ordersService.assignRider(req.params.id, body.riderId);
+    return ordersService.assignRiderToMasterOrder(req.params.id, body.riderId);
   });
 
-  app.post<{ Params: { id: string } }>('/dev/deliveries/:id/ping', async (req, reply) => {
+  app.post<{ Params: { id: string; stopId: string } }>('/dev/master-orders/:id/complete-stop/:stopId', async (req) => {
+    return ordersService.completeDeliveryStop(req.params.id, req.params.stopId);
+  });
+
+  app.post<{ Params: { deliveryId: string } }>('/dev/master-deliveries/:deliveryId/ping', async (req, reply) => {
     const body = parseOrThrow(pingBodySchema, req.body);
-    await ordersService.recordRiderLocationPing(req.params.id, body.riderId, body.latitude, body.longitude);
+    await ordersService.recordRiderLocationPing(req.params.deliveryId, body.riderId, body.latitude, body.longitude);
     reply.code(204).send();
   });
 
@@ -41,12 +43,15 @@ export async function devRoutes(app: FastifyInstance) {
     const { phone } = req.query as { phone?: string };
     const user = phone ? await prisma.user.findUnique({ where: { phone } }) : null;
     const customer = user ? await prisma.customer.findUnique({ where: { userId: user.id } }) : null;
-    const order = await prisma.order.findFirst({
-      where: customer ? { customerId: customer.id, status: 'PENDING_CONFIRMATION' } : { status: 'PENDING_CONFIRMATION' },
+    const masterOrder = await prisma.masterOrder.findFirst({
+      where: customer
+        ? { customerId: customer.id, storeOrders: { some: { status: 'PENDING_CONFIRMATION' } } }
+        : { storeOrders: { some: { status: 'PENDING_CONFIRMATION' } } },
       orderBy: { placedAt: 'desc' },
+      include: { storeOrders: { select: { id: true, businessId: true, sequence: true }, orderBy: { sequence: 'asc' } } },
     });
-    if (!order) return reply.code(404).send({ message: 'No pending order found.' });
-    return { id: order.id, orderNumber: order.orderNumber };
+    if (!masterOrder) return reply.code(404).send({ message: 'No pending order found.' });
+    return { id: masterOrder.id, orderNumber: masterOrder.orderNumber, storeOrders: masterOrder.storeOrders };
   });
 
   app.get('/dev/riders/online', async () => {

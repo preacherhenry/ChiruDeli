@@ -1,19 +1,19 @@
 import type { FastifyInstance } from 'fastify';
-import { validatePromoQuerySchema } from '@chirudeli/shared-types';
+import { validatePromoInputSchema } from '@chirudeli/shared-types';
 import { parseOrThrow } from '../../lib/validate';
 import { resolvePromotion } from './promotions.service';
 
 export async function promotionsRoutes(app: FastifyInstance) {
-  app.get('/promotions/validate', async (req) => {
-    const query = parseOrThrow(validatePromoQuerySchema, req.query);
+  app.post('/promotions/validate', async (req) => {
+    const input = parseOrThrow(validatePromoInputSchema, req.body);
     const result = await resolvePromotion({
-      code: query.code,
-      subtotal: query.subtotal,
-      businessId: query.businessId,
+      code: input.code,
+      subtotal: input.subtotal,
+      businessIds: input.businessIds,
     });
     return {
       valid: result.valid,
-      code: query.code.toUpperCase(),
+      code: input.code.toUpperCase(),
       type: result.type,
       discountAmount: result.discountAmount,
       freeDelivery: result.freeDelivery,

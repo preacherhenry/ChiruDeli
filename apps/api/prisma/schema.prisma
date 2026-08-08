@@ -66,7 +66,10 @@ enum DocumentStatus {
   REJECTED
 }
 
-/// Coarse, customer-facing order lifecycle — drives the tracking screen.
+/// Coarse, customer-facing store-order lifecycle — drives the tracking screen.
+/// Every store order in a master order moves through this independently,
+/// except RIDER_ASSIGNED/ON_THE_WAY/DELIVERED which the rider's progress
+/// through the shared delivery stops applies to all of them at once.
 enum OrderStatus {
   PENDING_CONFIRMATION
   CONFIRMED
@@ -79,18 +82,25 @@ enum OrderStatus {
   CANCELLED
 }
 
-/// Fine-grained rider-side delivery workflow (spec section 13).
-enum DeliveryStatus {
+/// Overall progress of a rider's multi-stop delivery run.
+enum MasterDeliveryStatus {
   ASSIGNED
-  EN_ROUTE_TO_PICKUP
-  ARRIVED_AT_PICKUP
-  PICKED_UP
-  EN_ROUTE_TO_DROPOFF
-  ARRIVED_AT_DROPOFF
+  IN_PROGRESS
   COMPLETED
 }
 
-/// Deliberately separate from OrderStatus/DeliveryStatus (business rule #13).
+enum DeliveryStopType {
+  PICKUP
+  DROPOFF
+}
+
+enum DeliveryStopStatus {
+  PENDING
+  ARRIVED
+  COMPLETED
+}
+
+/// Deliberately separate from OrderStatus/delivery progress (business rule #13).
 enum PaymentStatus {
   UNPAID
   PENDING
@@ -178,7 +188,8 @@ model Customer {
   profilePhotoUrl String?
   createdAt       DateTime @default(now())
 
-  orders                Order[]
+  masterOrders          MasterOrder[]
+  storeOrders           Order[]
   favoriteBusinesses    FavoriteBusiness[]
   favoriteProducts      FavoriteProduct[]
   reviews               Review[]
@@ -198,7 +209,7 @@ model Address {
   isDefault            Boolean  @default(false)
   createdAt            DateTime @default(now())
 
-  orders Order[]
+  masterOrders MasterOrder[]
 
   @@index([userId])
 }
@@ -351,32 +362,26 @@ model AuditLog {
 
 // ── Orders & delivery ────────────────────────────────────────────────────
 
-model Order {
-  id         String   @id @default(uuid())
-  orderNumber String  @unique
-  customerId String
-  customer   Customer @relation(fields: [customerId], references: [id])
-  businessId String
-  business   Business @relation(fields: [businessId], references: [id])
-  addressId  String
-  address    Address  @relation(fields: [addressId], references: [id])
-  riderId    String?
-  rider      Rider?   @relation(fields: [riderId], references: [id])
+/// The customer's single checkout event — one cart, one payment, one
+/// delivery run — split internally into one StoreOrder (Order, below) per
+/// business the cart touched. The customer sees only this; each business
+/// sees only its own StoreOrder.
+model MasterOrder {
+  id          String   @id @default(uuid())
+  orderNumber String   @unique
+  customerId  String
+  customer    Customer @relation(fields: [customerId], references: [id])
+  addressId   String
+  address     Address  @relation(fields: [addressId], references: [id])
 
-  status        OrderStatus   @default(PENDING_CONFIRMATION)
-  paymentStatus PaymentStatus @default(UNPAID)
   paymentMethod PaymentMethod
+  paymentStatus PaymentStatus @default(UNPAID)
 
   subtotal       Decimal @db.Decimal(10, 2)
   deliveryFee    Decimal @db.Decimal(10, 2)
   serviceFee     Decimal @db.Decimal(10, 2)
   discountAmount Decimal @db.Decimal(10, 2) @default(0)
   total          Decimal @db.Decimal(10, 2)
-
-  // Snapshotted at creation so later admin changes never rewrite history.
-  commissionPercent    Decimal @db.Decimal(5, 2)
-  commissionAmount     Decimal @db.Decimal(10, 2)
-  businessPayoutAmount Decimal @db.Decimal(10, 2)
 
   deliveryFeeOverridden Boolean @default(false)
   deliveryInstructions  String?
@@ -386,25 +391,66 @@ model Order {
   promotion             Promotion? @relation(fields: [promotionId], references: [id])
   cancelReason          String?
 
-  placedAt     DateTime  @default(now())
-  confirmedAt  DateTime?
-  preparingAt  DateTime?
-  readyAt      DateTime?
-  pickedUpAt   DateTime?
-  deliveredAt  DateTime?
-  cancelledAt  DateTime?
+  /// One rider handles the whole multi-stop run, so their rating is
+  /// captured once per master order rather than once per store.
+  riderRating  Int?
+  riderComment String?
 
-  items                OrderItem[]
-  delivery             Delivery?
-  payment              Payment?
-  review               Review?
-  statusEvents         OrderStatusEvent[]
-  commission           Commission?
-  promotionRedemption  PromotionRedemption?
+  placedAt    DateTime  @default(now())
+  cancelledAt DateTime?
+
+  storeOrders         Order[]
+  delivery            MasterDelivery?
+  payment             Payment?
+  promotionRedemption PromotionRedemption?
 
   @@index([customerId])
+}
+
+/// One per business touched by a MasterOrder — a "Store Order". A business
+/// only ever queries its own rows here; it has no way to see sibling store
+/// orders under the same master order.
+model Order {
+  id            String      @id @default(uuid())
+  orderNumber   String      @unique
+  masterOrderId String
+  masterOrder   MasterOrder @relation(fields: [masterOrderId], references: [id])
+  /// Position in the rider's pickup route (1-based) — mirrors the linked
+  /// DeliveryStop once a rider is assigned.
+  sequence      Int
+  customerId    String
+  customer      Customer @relation(fields: [customerId], references: [id])
+  businessId    String
+  business      Business @relation(fields: [businessId], references: [id])
+
+  status OrderStatus @default(PENDING_CONFIRMATION)
+
+  subtotal Decimal @db.Decimal(10, 2)
+
+  // Snapshotted at creation so later admin changes never rewrite history.
+  commissionPercent    Decimal @db.Decimal(5, 2)
+  commissionAmount     Decimal @db.Decimal(10, 2)
+  businessPayoutAmount Decimal @db.Decimal(10, 2)
+
+  cancelReason String?
+
+  confirmedAt DateTime?
+  preparingAt DateTime?
+  readyAt     DateTime?
+  pickedUpAt  DateTime?
+  deliveredAt DateTime?
+  cancelledAt DateTime?
+
+  items        OrderItem[]
+  review       Review?
+  statusEvents OrderStatusEvent[]
+  commission   Commission?
+  pickupStop   DeliveryStop?
+
+  @@unique([masterOrderId, businessId])
+  @@index([masterOrderId])
+  @@index([customerId])
   @@index([businessId])
-  @@index([riderId])
   @@index([status])
 }
 
@@ -463,9 +509,7 @@ model Rider {
   createdAt       DateTime          @default(now())
 
   documents     RiderDocument[]
-  orders        Order[]
-  deliveries    Delivery[]
-  reviews       Review[]
+  deliveries    MasterDelivery[]
   locationPings DeliveryLocationPing[]
 }
 
@@ -482,63 +526,79 @@ model RiderDocument {
   @@index([riderId])
 }
 
-/// Finer-grained rider-side workflow than Order.status (spec section 13).
-model Delivery {
-  id      String @id @default(uuid())
-  orderId String @unique
-  order   Order  @relation(fields: [orderId], references: [id])
-  riderId String?
-  rider   Rider?  @relation(fields: [riderId], references: [id])
+/// A rider's single multi-stop run for one master order: pick up from every
+/// store the cart touched, then deliver everything to the customer.
+model MasterDelivery {
+  id            String      @id @default(uuid())
+  masterOrderId String      @unique
+  masterOrder   MasterOrder @relation(fields: [masterOrderId], references: [id])
+  riderId       String?
+  rider         Rider?      @relation(fields: [riderId], references: [id])
 
-  status            DeliveryStatus @default(ASSIGNED)
-  distanceKm        Float
-  estimatedEarnings Decimal        @db.Decimal(10, 2)
-  actualEarnings    Decimal?       @db.Decimal(10, 2)
+  status            MasterDeliveryStatus @default(ASSIGNED)
+  totalDistanceKm   Float
+  estimatedEarnings Decimal              @db.Decimal(10, 2)
+  actualEarnings    Decimal?             @db.Decimal(10, 2)
+  /// Shown to the rider, confirmed by the customer at the final handoff.
+  deliveryPin       String
 
-  pickupLatitude   Float
-  pickupLongitude  Float
-  dropoffLatitude  Float
-  dropoffLongitude Float
-  /// Shown to the rider, confirmed by the customer at handoff.
-  deliveryPin      String
+  assignedAt  DateTime  @default(now())
+  completedAt DateTime?
 
-  assignedAt      DateTime  @default(now())
-  arrivedPickupAt DateTime?
-  pickedUpAt      DateTime?
-  arrivedDropoffAt DateTime?
-  completedAt     DateTime?
-
+  stops         DeliveryStop[]
   locationPings DeliveryLocationPing[]
 
   @@index([riderId])
 }
 
+/// One PICKUP row per store (in visiting order) plus a final DROPOFF row at
+/// the customer. The rider completes them strictly in `sequence` order.
+model DeliveryStop {
+  id               String           @id @default(uuid())
+  masterDeliveryId String
+  masterDelivery   MasterDelivery   @relation(fields: [masterDeliveryId], references: [id])
+  sequence         Int
+  type             DeliveryStopType
+  /// Set for PICKUP stops, null for the final DROPOFF stop.
+  storeOrderId     String?          @unique
+  storeOrder       Order?           @relation(fields: [storeOrderId], references: [id])
+  label            String
+  latitude         Float
+  longitude        Float
+
+  status      DeliveryStopStatus @default(PENDING)
+  arrivedAt   DateTime?
+  completedAt DateTime?
+
+  @@index([masterDeliveryId, sequence])
+}
+
 /// Append-only GPS trail — drives the live map + route history.
 model DeliveryLocationPing {
-  id         String   @id @default(uuid())
-  deliveryId String
-  delivery   Delivery @relation(fields: [deliveryId], references: [id])
-  riderId    String
-  rider      Rider    @relation(fields: [riderId], references: [id])
-  latitude   Float
-  longitude  Float
-  recordedAt DateTime @default(now())
+  id               String         @id @default(uuid())
+  masterDeliveryId String
+  masterDelivery   MasterDelivery @relation(fields: [masterDeliveryId], references: [id])
+  riderId          String
+  rider            Rider          @relation(fields: [riderId], references: [id])
+  latitude         Float
+  longitude        Float
+  recordedAt       DateTime       @default(now())
 
-  @@index([deliveryId, recordedAt])
+  @@index([masterDeliveryId, recordedAt])
 }
 
 // ── Payments & money ─────────────────────────────────────────────────────
 
 model Payment {
-  id          String        @id @default(uuid())
-  orderId     String        @unique
-  order       Order         @relation(fields: [orderId], references: [id])
-  method      PaymentMethod
-  status      PaymentStatus @default(UNPAID)
-  amount      Decimal       @db.Decimal(10, 2)
-  providerRef String?
-  initiatedAt DateTime      @default(now())
-  completedAt DateTime?
+  id            String        @id @default(uuid())
+  masterOrderId String        @unique
+  masterOrder   MasterOrder   @relation(fields: [masterOrderId], references: [id])
+  method        PaymentMethod
+  status        PaymentStatus @default(UNPAID)
+  amount        Decimal       @db.Decimal(10, 2)
+  providerRef   String?
+  initiatedAt   DateTime      @default(now())
+  completedAt   DateTime?
 
   transactions Transaction[]
 }
@@ -556,7 +616,7 @@ model Transaction {
   @@index([paymentId])
 }
 
-/// Ledger row per completed order — kept separate from Order's own snapshot
+/// Ledger row per store order — kept separate from Order's own snapshot
 /// fields for reporting flexibility (e.g. payout batching).
 model Commission {
   id         String   @id @default(uuid())
@@ -588,39 +648,36 @@ model Promotion {
   isActive          Boolean       @default(true)
   createdAt         DateTime      @default(now())
 
-  orders      Order[]
-  redemptions PromotionRedemption[]
+  masterOrders MasterOrder[]
+  redemptions  PromotionRedemption[]
 }
 
 model PromotionRedemption {
-  id          String    @id @default(uuid())
-  promotionId String
-  promotion   Promotion @relation(fields: [promotionId], references: [id])
-  customerId  String
-  customer    Customer  @relation(fields: [customerId], references: [id])
-  orderId     String    @unique
-  order       Order     @relation(fields: [orderId], references: [id])
-  redeemedAt  DateTime  @default(now())
+  id            String      @id @default(uuid())
+  promotionId   String
+  promotion     Promotion   @relation(fields: [promotionId], references: [id])
+  customerId    String
+  customer      Customer    @relation(fields: [customerId], references: [id])
+  masterOrderId String      @unique
+  masterOrder   MasterOrder @relation(fields: [masterOrderId], references: [id])
+  redeemedAt    DateTime    @default(now())
 
   @@index([promotionId, customerId])
 }
 
-/// One row per order — captures both the business rating and the rider
-/// rating in a single post-delivery review, matching the customer app flow.
+/// One row per store order — the business rating for that specific store.
+/// The rider (shared across the whole master order) is rated once, on
+/// MasterOrder.riderRating, instead of being repeated here per store.
 model Review {
   id              String   @id @default(uuid())
   orderId         String   @unique
   order           Order    @relation(fields: [orderId], references: [id])
   customerId      String
   customer        Customer @relation(fields: [customerId], references: [id])
-  businessId      String?
-  business        Business? @relation(fields: [businessId], references: [id])
-  riderId         String?
-  rider           Rider?   @relation(fields: [riderId], references: [id])
-  businessRating  Int?
+  businessId      String
+  business        Business @relation(fields: [businessId], references: [id])
+  businessRating  Int
   businessComment String?
-  riderRating     Int?
-  riderComment    String?
   isModerated     Boolean  @default(false)
   isHidden        Boolean  @default(false)
   createdAt       DateTime @default(now())

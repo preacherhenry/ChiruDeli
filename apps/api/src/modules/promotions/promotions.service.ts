@@ -16,7 +16,9 @@ export interface PromoResolution {
 export async function resolvePromotion(params: {
   code: string;
   subtotal: number;
-  businessId?: string;
+  /** Every business touched by the cart — a business-specific promo only
+   * applies when that business is actually one of them. */
+  businessIds?: string[];
   customerId?: string;
 }): Promise<PromoResolution> {
   const promotion = await prisma.promotion.findUnique({ where: { code: params.code.toUpperCase() } });
@@ -28,8 +30,8 @@ export async function resolvePromotion(params: {
   if (promotion.startsAt > now || (promotion.endsAt && promotion.endsAt < now)) {
     return { valid: false, message: 'This promo code has expired.' };
   }
-  if (promotion.businessId && promotion.businessId !== params.businessId) {
-    return { valid: false, message: 'This promo code is not valid for this business.' };
+  if (promotion.businessId && !(params.businessIds ?? []).includes(promotion.businessId)) {
+    return { valid: false, message: 'This promo code is not valid for these businesses.' };
   }
   if (promotion.minOrderAmount && params.subtotal < Number(promotion.minOrderAmount)) {
     return {
