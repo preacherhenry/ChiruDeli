@@ -1,9 +1,10 @@
-import { View, Text, Pressable } from 'react-native';
+import { View, Text, Pressable, Linking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { MapPin, Bell, HelpCircle, LogOut, ChevronRight, User } from 'lucide-react-native';
+import { MapPin, Bell, HelpCircle, Store, LogOut, ChevronRight, User } from 'lucide-react-native';
 import { useLogout } from '@chirudeli/api-client';
 import { useAppNavigation } from '../../navigation/useAppNavigation';
 import { useSessionStore } from '../../state/sessionStore';
+import { BUSINESS_WEB_URL } from '../../lib/apiClient';
 
 const MENU = [
   { icon: MapPin, label: 'Addresses', route: 'Addresses' as const },
@@ -46,6 +47,18 @@ export function ProfileScreen() {
           </Pressable>
         ))}
       </View>
+
+      <Pressable
+        onPress={() => Linking.openURL(`${BUSINESS_WEB_URL}/register`)}
+        className="mx-4 mt-6 flex-row items-center gap-3 rounded-lg bg-white px-4 py-4"
+      >
+        <Store size={18} color="#0E6E4E" />
+        <View className="flex-1">
+          <Text className="font-body-semibold text-sm text-neutral-900">Register your store</Text>
+          <Text className="font-body text-xs text-neutral-500">Start selling and reaching customers through ChiruDeli</Text>
+        </View>
+        <ChevronRight size={16} color="#C3C7BF" />
+      </Pressable>
 
       <Pressable
         onPress={() => logout.mutate(undefined, { onSuccess: setSignedOut })}

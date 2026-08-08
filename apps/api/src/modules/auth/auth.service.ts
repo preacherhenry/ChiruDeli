@@ -47,7 +47,7 @@ export async function registerCustomer(input: {
 async function loginWithPassword(phone: string, password: string, allowedRoles: UserRole[]) {
   const user = await prisma.user.findUnique({
     where: { phone },
-    include: { customer: true, rider: true, adminUser: true, businesses: true },
+    include: { customer: true, rider: true, adminUser: true, storeManager: true },
   });
   if (!user || !allowedRoles.includes(user.role)) {
     throw new UnauthorizedError('Incorrect phone number or password.');
@@ -62,7 +62,7 @@ async function loginWithPassword(phone: string, password: string, allowedRoles: 
     user.customer?.displayName ??
     user.rider?.fullName ??
     user.adminUser?.fullName ??
-    user.businesses[0]?.name ??
+    user.storeManager?.fullName ??
     'ChiruDeli User';
 
   await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
@@ -73,11 +73,11 @@ async function loginWithPassword(phone: string, password: string, allowedRoles: 
 export const loginCustomer = (phone: string, password: string) =>
   loginWithPassword(phone, password, ['CUSTOMER']);
 export const loginBusiness = (phone: string, password: string) =>
-  loginWithPassword(phone, password, ['BUSINESS_OWNER']);
+  loginWithPassword(phone, password, ['STORE_MANAGER']);
 export const loginRider = (phone: string, password: string) =>
   loginWithPassword(phone, password, ['RIDER']);
 export const loginAdmin = (phone: string, password: string) =>
-  loginWithPassword(phone, password, ['ADMIN']);
+  loginWithPassword(phone, password, ['SYSTEM_ADMIN']);
 
 export async function requestOtp(phone: string) {
   const code = issueOtp(phone);
@@ -91,6 +91,9 @@ export async function verifyOtpAndLogin(phone: string, code: string) {
   }
 
   let user = await prisma.user.findUnique({ where: { phone }, include: { customer: true } });
+  if (user && user.role !== 'CUSTOMER') {
+    throw new ValidationError('This phone number is registered to a non-customer account.');
+  }
   if (!user) {
     const passwordHash = await hashPassword(`otp-only-${Date.now()}-${Math.random()}`);
     user = await prisma.user.create({
@@ -122,7 +125,7 @@ export async function refreshSession(refreshToken: string) {
   }
   const user = await prisma.user.findUnique({
     where: { id: payload.sub },
-    include: { customer: true, rider: true, adminUser: true, businesses: true },
+    include: { customer: true, rider: true, adminUser: true, storeManager: true },
   });
   if (!user || user.status !== 'ACTIVE') throw new UnauthorizedError('Please log in again.');
 
@@ -130,7 +133,7 @@ export async function refreshSession(refreshToken: string) {
     user.customer?.displayName ??
     user.rider?.fullName ??
     user.adminUser?.fullName ??
-    user.businesses[0]?.name ??
+    user.storeManager?.fullName ??
     'ChiruDeli User';
 
   return { user: toSessionUser(user, fullName), tokens: issueTokens(user.id, user.role) };
@@ -139,7 +142,7 @@ export async function refreshSession(refreshToken: string) {
 export async function getCurrentUser(userId: string) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    include: { customer: true, rider: true, adminUser: true, businesses: true },
+    include: { customer: true, rider: true, adminUser: true, storeManager: true },
   });
   if (!user || user.status !== 'ACTIVE') throw new UnauthorizedError('Please log in again.');
 
@@ -147,7 +150,7 @@ export async function getCurrentUser(userId: string) {
     user.customer?.displayName ??
     user.rider?.fullName ??
     user.adminUser?.fullName ??
-    user.businesses[0]?.name ??
+    user.storeManager?.fullName ??
     'ChiruDeli User';
 
   return toSessionUser(user, fullName);

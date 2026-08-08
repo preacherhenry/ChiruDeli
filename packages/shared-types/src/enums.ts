@@ -10,7 +10,7 @@ function makeEnum<const T extends readonly [string, ...string[]]>(values: T) {
   return { values, schema: z.enum(values as unknown as [T[number], ...T[number][]]) };
 }
 
-export const UserRole = makeEnum(['CUSTOMER', 'BUSINESS_OWNER', 'RIDER', 'ADMIN'] as const);
+export const UserRole = makeEnum(['CUSTOMER', 'STORE_MANAGER', 'RIDER', 'SYSTEM_ADMIN'] as const);
 export type UserRole = z.infer<typeof UserRole.schema>;
 
 export const AccountStatus = makeEnum(['ACTIVE', 'SUSPENDED', 'PENDING'] as const);
@@ -19,7 +19,19 @@ export type AccountStatus = z.infer<typeof AccountStatus.schema>;
 export const ApprovalStatus = makeEnum(['PENDING', 'APPROVED', 'REJECTED'] as const);
 export type ApprovalStatus = z.infer<typeof ApprovalStatus.schema>;
 
-export const BusinessStatus = makeEnum(['PENDING', 'APPROVED', 'REJECTED', 'SUSPENDED'] as const);
+/** Store approval/lifecycle status — separate from `isActivated` (business.ts),
+ * since visibility requires "approved AND activated", two independent facts. */
+export const BusinessStatus = makeEnum([
+  'DRAFT',
+  'SUBMITTED',
+  'PENDING_APPROVAL',
+  'UNDER_REVIEW',
+  'APPROVED',
+  'REJECTED',
+  'RESUBMISSION',
+  'SUSPENDED',
+  'DEACTIVATED',
+] as const);
 export type BusinessStatus = z.infer<typeof BusinessStatus.schema>;
 
 export const StoreState = makeEnum(['OPEN', 'PAUSED'] as const);
@@ -99,17 +111,10 @@ export const NotificationType = makeEnum([
   'NEW_DELIVERY_REQUEST',
   'DELIVERY_INSTRUCTIONS_UPDATED',
   'ACCOUNT_STATUS_CHANGED',
+  'STORE_APPROVED',
+  'STORE_REJECTED',
+  'STORE_CHANGES_REQUESTED',
+  'STORE_SUSPENDED',
+  'STORE_REACTIVATED',
 ] as const);
 export type NotificationType = z.infer<typeof NotificationType.schema>;
-
-export const BusinessCategorySlug = makeEnum([
-  'FOOD',
-  'GROCERIES',
-  'PHARMACY',
-  'ELECTRONICS',
-  'STATIONERY',
-  'HOUSEHOLD',
-  'CLOTHING',
-  'OTHER',
-] as const);
-export type BusinessCategorySlug = z.infer<typeof BusinessCategorySlug.schema>;

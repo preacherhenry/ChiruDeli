@@ -1,20 +1,20 @@
 import { View, Text, FlatList, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ChevronLeft, Store } from 'lucide-react-native';
-import { useBusinesses } from '@chirudeli/api-client';
+import { useBusinesses, useStoreClasses } from '@chirudeli/api-client';
 import { useAppNavigation, useAppRoute } from '../../navigation/useAppNavigation';
 import { useLocationStore } from '../../state/locationStore';
 import { BusinessCard } from '../../components/BusinessCard';
 import { LoadingState } from '../../components/LoadingState';
 import { ErrorState } from '../../components/ErrorState';
 import { EmptyState } from '../../components/EmptyState';
-import { CATEGORIES } from '../../lib/categories';
 
 export function BusinessListingScreen() {
   const navigation = useAppNavigation();
   const route = useAppRoute<'BusinessListing'>();
   const { coords } = useLocationStore();
-  const category = CATEGORIES.find((c) => c.slug === route.params?.categorySlug);
+  const storeClasses = useStoreClasses();
+  const category = storeClasses.data?.find((c) => c.slug === route.params?.categorySlug);
 
   const businesses = useBusinesses({
     category: route.params?.categorySlug,

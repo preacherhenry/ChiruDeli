@@ -73,6 +73,32 @@ export const storeOrderSchema = z.object({
 });
 export type StoreOrder = z.infer<typeof storeOrderSchema>;
 
+/** What a store manager sees for one of their own store orders — never the
+ * sibling businesses' items/financials from the same master order (spec §25). */
+export const managerOrderSchema = z.object({
+  id: idSchema,
+  orderNumber: z.string(),
+  masterOrderId: idSchema,
+  masterOrderNumber: z.string(),
+  status: OrderStatus.schema,
+  items: z.array(orderItemSchema),
+  subtotal: moneySchema,
+  statusHistory: z.array(orderStatusEventSchema),
+  customerName: z.string(),
+  deliveryArea: z.string(),
+  riderName: z.string().nullable(),
+  placedAt: z.string().datetime(),
+});
+export type ManagerOrder = z.infer<typeof managerOrderSchema>;
+
+export const rejectStoreOrderSchema = z.object({ reason: z.string().min(2).max(280) });
+export type RejectStoreOrderInput = z.infer<typeof rejectStoreOrderSchema>;
+
+export const advanceStoreOrderSchema = z.object({
+  toStatus: z.enum(['CONFIRMED', 'PREPARING', 'READY_FOR_PICKUP']),
+});
+export type AdvanceStoreOrderInput = z.infer<typeof advanceStoreOrderSchema>;
+
 // ── Delivery stops (the rider's pickup route + final dropoff) ──────────
 
 export const deliveryStopSchema = z.object({

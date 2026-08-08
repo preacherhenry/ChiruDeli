@@ -4,10 +4,13 @@ import { env } from './lib/env';
 import { registerErrorHandler } from './plugins/errorHandler';
 import { authRoutes } from './modules/auth/auth.routes';
 import { businessesRoutes } from './modules/businesses/businesses.routes';
+import { storeClassesRoutes } from './modules/store-classes/store-classes.routes';
+import { productsRoutes } from './modules/products/products.routes';
 import { addressesRoutes } from './modules/addresses/addresses.routes';
 import { ordersRoutes } from './modules/orders/orders.routes';
 import { notificationsRoutes } from './modules/notifications/notifications.routes';
 import { promotionsRoutes } from './modules/promotions/promotions.routes';
+import { platformRoutes } from './modules/platform/platform.routes';
 import { devRoutes } from './modules/dev/dev.routes';
 
 export function buildApp() {
@@ -25,10 +28,13 @@ export function buildApp() {
 
   app.register(authRoutes);
   app.register(businessesRoutes);
+  app.register(storeClassesRoutes);
+  app.register(productsRoutes);
   app.register(addressesRoutes);
   app.register(ordersRoutes);
   app.register(notificationsRoutes);
   app.register(promotionsRoutes);
+  app.register(platformRoutes);
   app.register(devRoutes);
 
   return app;

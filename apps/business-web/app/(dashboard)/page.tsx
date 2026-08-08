@@ -1,57 +1,91 @@
-import { ClipboardList, Banknote, Clock, CheckCircle2 } from 'lucide-react';
+'use client';
+
+import { ClipboardList, Banknote, Clock, Package, Star } from 'lucide-react';
+import { useMyStore, useManagerDashboard, useActivateStore, useSetStoreOpenStatus } from '@chirudeli/api-client';
 import { PageHeader } from '../../src/components/PageHeader';
 import { StatCard } from '../../src/components/StatCard';
-
-const RECENT_ORDERS = [
-  { id: 'CD-260807-K3F9', customer: 'Mwansa Phiri', total: 'K145', status: 'Preparing' },
-  { id: 'CD-260807-A8Q2', customer: 'Grace Tembo', total: 'K78', status: 'Delivered' },
-  { id: 'CD-260806-7XPL', customer: 'Joseph Mulenga', total: 'K210', status: 'Delivered' },
-];
+import { Button } from '../../src/components/Button';
+import { OnboardingChecklist } from '../../src/components/OnboardingChecklist';
+import { useSessionStore } from '../../src/state/sessionStore';
+import { formatK } from '../../src/lib/money';
 
 export default function OverviewPage() {
+  const user = useSessionStore((s) => s.user);
+  const myStore = useMyStore();
+  const dashboard = useManagerDashboard();
+  const activateStore = useActivateStore();
+  const setOpenStatus = useSetStoreOpenStatus();
+
+  if (myStore.isLoading || !myStore.data) {
+    return <p className="text-sm text-neutral-400">Loading…</p>;
+  }
+
+  const store = myStore.data;
+
   return (
     <div>
-      <PageHeader title="Overview" />
-      <div className="mb-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatCard icon={ClipboardList} label="Today's orders" value="12" />
-        <StatCard icon={Banknote} label="Today's sales" value="K1,840" />
-        <StatCard icon={Clock} label="Pending orders" value="3" />
-        <StatCard icon={CheckCircle2} label="Completed orders" value="9" />
+      <PageHeader title={`Good ${timeOfDay()}, ${user?.fullName ?? 'there'}`} />
+
+      <div className="mb-6 flex items-center justify-between rounded-xl bg-white p-5 shadow-sm">
+        <div>
+          <h2 className="font-heading text-base font-semibold text-neutral-900">{store.name}</h2>
+          <p className="mt-0.5 text-sm text-neutral-500">
+            {store.effectiveIsOpen ? '🟢 OPEN — Accepting orders' : '🔴 CLOSED — Not accepting orders'}
+            {store.status === 'SUSPENDED' ? ' (suspended by ChiruDeli)' : ''}
+          </p>
+        </div>
+        {store.isActivated && store.status !== 'SUSPENDED' && store.status !== 'DEACTIVATED' ? (
+          <Button
+            variant={store.storeState === 'OPEN' ? 'outline' : 'primary'}
+            loading={setOpenStatus.isPending}
+            onClick={() => setOpenStatus.mutate(store.storeState === 'OPEN' ? 'PAUSED' : 'OPEN')}
+          >
+            {store.storeState === 'OPEN' ? 'Pause store' : 'Reopen store'}
+          </Button>
+        ) : null}
       </div>
 
-      <div className="rounded-xl bg-white shadow-sm">
-        <div className="border-b border-neutral-100 px-5 py-4 font-heading text-base font-semibold text-neutral-900">
-          Recent orders
+      {!store.isActivated ? (
+        <div className="mb-6">
+          {store.status === 'APPROVED' ? (
+            <OnboardingChecklist
+              checklist={store.onboarding}
+              onActivate={() => activateStore.mutate()}
+              activating={activateStore.isPending}
+            />
+          ) : store.status === 'REJECTED' ? (
+            <div className="rounded-xl bg-error/5 p-5 text-sm text-error">
+              Your store registration could not be approved.
+              {store.rejectionReason ? <p className="mt-1">{store.rejectionReason}</p> : null}
+            </div>
+          ) : store.status === 'RESUBMISSION' ? (
+            <div className="rounded-xl bg-secondary-50 p-5 text-sm text-secondary-700">
+              Your store registration requires additional information.
+              {store.rejectionReason ? <p className="mt-1">{store.rejectionReason}</p> : null}
+            </div>
+          ) : (
+            <div className="rounded-xl bg-info/5 p-5 text-sm text-info">
+              Your store registration has been submitted successfully. Your application is currently being reviewed by
+              the ChiruDeli administration team.
+            </div>
+          )}
         </div>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-xs text-neutral-400">
-              <th className="px-5 py-3 font-medium">Order</th>
-              <th className="px-5 py-3 font-medium">Customer</th>
-              <th className="px-5 py-3 font-medium">Total</th>
-              <th className="px-5 py-3 font-medium">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {RECENT_ORDERS.map((o) => (
-              <tr key={o.id} className="border-t border-neutral-50">
-                <td className="px-5 py-3 font-medium text-neutral-900">{o.id}</td>
-                <td className="px-5 py-3 text-neutral-600">{o.customer}</td>
-                <td className="px-5 py-3 text-neutral-900">{o.total}</td>
-                <td className="px-5 py-3">
-                  <span
-                    className={`rounded-pill px-2.5 py-1 text-xs font-semibold ${
-                      o.status === 'Delivered' ? 'bg-primary-50 text-primary-700' : 'bg-secondary-50 text-secondary-700'
-                    }`}
-                  >
-                    {o.status}
-                  </span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      ) : null}
+
+      <div className="mb-8 grid grid-cols-2 gap-4 lg:grid-cols-5">
+        <StatCard icon={ClipboardList} label="Today's orders" value={String(dashboard.data?.todayOrders ?? 0)} />
+        <StatCard icon={Banknote} label="Today's sales" value={formatK(dashboard.data?.todaySales ?? 0)} />
+        <StatCard icon={Clock} label="Pending orders" value={String(dashboard.data?.pendingOrders ?? 0)} />
+        <StatCard icon={Package} label="Products" value={String(dashboard.data?.productCount ?? 0)} />
+        <StatCard icon={Star} label="Store rating" value={dashboard.data ? dashboard.data.ratingAvg.toFixed(1) : '—'} />
       </div>
     </div>
   );
+}
+
+function timeOfDay() {
+  const h = new Date().getHours();
+  if (h < 12) return 'morning';
+  if (h < 17) return 'afternoon';
+  return 'evening';
 }

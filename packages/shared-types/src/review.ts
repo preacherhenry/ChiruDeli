@@ -25,3 +25,13 @@ export const submitRiderReviewSchema = z.object({
   riderComment: z.string().max(500).optional(),
 });
 export type SubmitRiderReviewInput = z.infer<typeof submitRiderReviewSchema>;
+
+export const managerReviewSchema = z.object({
+  id: idSchema,
+  orderId: idSchema,
+  businessRating: z.number(),
+  businessComment: z.string().nullable(),
+  customerName: z.string(),
+  createdAt: z.string().datetime(),
+});
+export type ManagerReview = z.infer<typeof managerReviewSchema>;

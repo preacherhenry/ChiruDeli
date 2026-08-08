@@ -53,6 +53,47 @@ fit together.
   delivery surcharge in the totals, and ran the full simulation through
   rider assignment, both pickups, and final delivery.
 
+## Done this session — store classes, approval workflow & RBAC
+
+- **Store classes are now admin-managed data** (`StoreClass` +
+  `StoreClassDocumentRequirement`), not a hardcoded enum — full CRUD in
+  `admin-web` (`/store-classes`), including per-class required-document
+  configuration. `BusinessCategory`/`BusinessCategorySlug` are gone.
+- **Role rename**: `UserRole` is now `CUSTOMER | STORE_MANAGER | RIDER |
+  SYSTEM_ADMIN` (was `BUSINESS_OWNER`/`ADMIN`) throughout the schema, API,
+  and all 4 frontends.
+- **Real store registration → approval → onboarding → activation workflow**
+  (see `docs/architecture.md`'s "Store classes, approval workflow & RBAC"):
+  `business-web`'s `/register` collects personal + store info and uploads
+  documents dynamically per the chosen class; `admin-web`'s Store Approvals
+  section reviews and approves/rejects/requests changes, including
+  per-document review; the manager dashboard shows a live onboarding
+  checklist gating a real "Activate Store" action.
+- **RBAC actually enforced server-side now**, not just hidden in the UI —
+  every route is role-gated via `requireRole(...)`, and every store-scoped
+  route resolves/verifies the business via `requireManagedBusiness`/
+  `getManagedBusinessId` (`lib/storeAccess.ts`) rather than trusting a
+  client-supplied store id.
+- **`business-web` is a real store manager dashboard**: dashboard stats,
+  orders (accept/prepare/ready-for-pickup/reject, scoped to only that
+  manager's own store orders), product + category CRUD, store profile,
+  opening hours, open/closed toggle (which admin suspension always
+  overrides), a basic real sales rollup, and read-only reviews.
+- **`admin-web` core sections are real**: platform stats, Store Approvals,
+  Stores (search/filter/suspend/reactivate/deactivate/edit), Store Classes,
+  Store Managers (suspend/reactivate/reset password), and global master-order
+  monitoring.
+- Documents are stored as base64 behind a new `DocumentStorageProvider`
+  interface (`lib/documentStorage.ts`) — same swappable pattern as
+  `PaymentProvider`/`SmsProvider`, ready to swap to S3/R2 later.
+- Verified live against Neon with a 27-check scripted walkthrough: register
+  a store → confirm it's invisible to customers while pending → admin
+  approves → manager completes onboarding (profile, hours, category,
+  product, documents) → activates → store appears filtered by its class →
+  admin suspends → store disappears again and the manager can't override the
+  suspension → admin reactivates. Also confirmed a `STORE_MANAGER` gets 403
+  on `/admin/*` routes and an unauthenticated request gets 401 on `/manager/*`.
+
 ## Known limitations to fix before this is production-real
 
 - **Payments**: Cash on Delivery is fully functional. Mobile Money and Card
@@ -86,16 +127,27 @@ fit together.
    `assignRiderToMasterOrder`, `completeDeliveryStop` in
    `orders.service.ts`) already support this server-side — just need
    role-gated routes, earnings aggregation, delivery-PIN confirmation at
-   the final handoff.
-2. **Business dashboard backend** — registration + approval workflow,
-   product CRUD (`upsertProductSchema` already defined), order
-   accept/reject and status updates, sales reporting, store pause/unpause.
-3. **Admin dashboard backend** — business/rider approval queues, customer
-   management (suspend), delivery zone & fee CRUD, commission overrides,
-   promotion CRUD, live-deliveries feed (`admin:live` socket room is
-   reserved for this), reports/analytics aggregation endpoints.
-4. **Real payment/SMS/maps providers** (see above).
-5. **Testing, security, performance pass** — broaden the Vitest suite past
+   the final handoff. Admin-side Riders/Riders-approval pages are still
+   placeholders too.
+2. **Remaining admin sections** — customer management (suspend), delivery
+   zone & fee CRUD wiring (the `DeliveryZone`/`DeliveryFeeConfig` models and
+   calculation logic already exist, just no admin UI/routes), commission
+   overrides, platform-wide promotion CRUD wiring (`Promotion` model exists,
+   `/promotions/validate` is real, but there's no create/edit UI), a real
+   payments/refunds/transactions view (`Payment`/`Transaction` models
+   exist), reports/analytics aggregation, admin Products page, and
+   `admin-web`'s Settings page (platform name/logo/contact/fees/commissions
+   as editable system settings — no `SystemSettings` model exists yet).
+3. **Store-level promotions** — `business-web`'s Promotions nav item is
+   still a placeholder; the spec assigns promotion *creation* to the admin
+   only, so this may just become a read-only view of promotions that apply
+   to that store.
+4. **Native store registration screen** — `customer-mobile`'s "Register
+   your store" entry currently deep-links to `business-web`'s `/register`
+   form rather than a full native flow; revisit if store managers need to
+   register without a browser.
+5. **Real payment/SMS/maps providers** (see above).
+6. **Testing, security, performance pass** — broaden the Vitest suite past
    fee/commission/state-machine coverage, add integration tests against a
    real Postgres, load-test the order-creation path, and run
    `/security-review` before any production deployment.

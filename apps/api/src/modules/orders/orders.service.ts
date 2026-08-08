@@ -16,6 +16,7 @@ import {
   sequencePickupStops,
 } from '../../lib/fees';
 import { requireCustomerProfile } from '../../lib/customers';
+import { getManagedBusinessId, getPrimaryManagerUserId, requireManagedBusiness } from '../../lib/storeAccess';
 import { generateOrderNumber, generateDeliveryPin } from '../../lib/orderNumber';
 import { getPaymentProvider } from '../../lib/payments';
 import { resolvePromotion } from '../promotions/promotions.service';
@@ -102,7 +103,7 @@ async function computeOrder(
   const businessById = new Map(businesses.map((b) => [b.id, b]));
   for (const businessId of businessIds) {
     const business = businessById.get(businessId);
-    if (!business || business.status !== 'APPROVED') throw new NotFoundError('Business');
+    if (!business || business.status !== 'APPROVED' || !business.isActivated) throw new NotFoundError('Business');
     if (business.storeState !== 'OPEN') {
       throw new ConflictError(`${business.name} is not accepting orders right now.`, 'BUSINESS_CLOSED');
     }
@@ -289,13 +290,16 @@ export async function createOrder(userId: string, input: CreateOrderInput) {
 
   for (const group of ordered) {
     const business = businessById.get(group.businessId)!;
-    await createNotification({
-      userId: business.ownerId,
-      type: 'NEW_ORDER',
-      title: 'New order received',
-      body: `Order ${orderNumber} includes K${group.subtotal} worth of items from you.`,
-      data: { masterOrderId: masterOrder.id },
-    });
+    const managerUserId = await getPrimaryManagerUserId(business.id);
+    if (managerUserId) {
+      await createNotification({
+        userId: managerUserId,
+        type: 'NEW_ORDER',
+        title: 'New order received',
+        body: `Order ${orderNumber} includes K${group.subtotal} worth of items from you.`,
+        data: { masterOrderId: masterOrder.id },
+      });
+    }
   }
 
   return mapMasterOrderToDto(await getMasterOrderOrThrow(masterOrder.id));
@@ -358,13 +362,16 @@ export async function cancelOrder(userId: string, masterOrderId: string, reason:
   const updated = await getMasterOrderOrThrow(masterOrderId);
   await broadcastStatus(updated);
   for (const so of order.storeOrders) {
-    await createNotification({
-      userId: so.business.ownerId,
-      type: 'ORDER_CANCELLED',
-      title: 'Order cancelled',
-      body: `Order ${so.orderNumber} was cancelled by the customer.`,
-      data: { storeOrderId: so.id },
-    });
+    const managerUserId = await getPrimaryManagerUserId(so.businessId);
+    if (managerUserId) {
+      await createNotification({
+        userId: managerUserId,
+        type: 'ORDER_CANCELLED',
+        title: 'Order cancelled',
+        body: `Order ${so.orderNumber} was cancelled by the customer.`,
+        data: { storeOrderId: so.id },
+      });
+    }
   }
   return mapMasterOrderToDto(updated);
 }
@@ -653,4 +660,122 @@ export async function recordRiderLocationPing(
     location: { latitude, longitude },
     recordedAt: new Date().toISOString(),
   });
+}
+
+// ── Store manager: "my orders" (spec §25 — own store's orders only) ─────
+
+const managerOrderInclude = {
+  items: true,
+  statusEvents: { orderBy: { changedAt: 'asc' as const } },
+  masterOrder: {
+    include: {
+      customer: true,
+      address: true,
+      delivery: { include: { rider: true } },
+    },
+  },
+} satisfies Prisma.OrderInclude;
+
+type ManagerOrderRow = Prisma.OrderGetPayload<{ include: typeof managerOrderInclude }>;
+
+function mapManagerOrder(order: ManagerOrderRow) {
+  return {
+    id: order.id,
+    orderNumber: order.orderNumber,
+    masterOrderId: order.masterOrderId,
+    masterOrderNumber: order.masterOrder.orderNumber,
+    status: order.status,
+    items: order.items.map((item) => ({
+      id: item.id,
+      productId: item.productId,
+      nameSnapshot: item.nameSnapshot,
+      priceSnapshot: Number(item.priceSnapshot),
+      quantity: item.quantity,
+      addOnsLabel: item.addOnsLabel ?? undefined,
+      specialInstructions: item.specialInstructions ?? undefined,
+      lineTotal: Number(item.priceSnapshot) * item.quantity + Number(item.addOnsPriceSnapshot) * item.quantity,
+    })),
+    subtotal: Number(order.subtotal),
+    statusHistory: order.statusEvents.map((e) => ({ status: e.status, changedAt: e.changedAt.toISOString() })),
+    customerName: order.masterOrder.customer.displayName,
+    deliveryArea: order.masterOrder.address.area,
+    riderName: order.masterOrder.delivery?.rider?.fullName ?? null,
+    placedAt: order.masterOrder.placedAt.toISOString(),
+  };
+}
+
+export async function listManagerOrders(userId: string) {
+  const businessId = await getManagedBusinessId(userId);
+  const orders = await prisma.order.findMany({
+    where: { businessId },
+    include: managerOrderInclude,
+    orderBy: { masterOrder: { placedAt: 'desc' } },
+  });
+  return orders.map(mapManagerOrder);
+}
+
+export async function getManagerOrderDetail(userId: string, storeOrderId: string) {
+  const order = await prisma.order.findUnique({ where: { id: storeOrderId }, include: managerOrderInclude });
+  if (!order) throw new NotFoundError('Order');
+  await requireManagedBusiness(userId, order.businessId);
+  return mapManagerOrder(order);
+}
+
+/** Ownership-checked wrapper around advanceStoreOrderStatus for the real
+ * manager-facing "accept/prepare/ready" actions (dev.routes.ts's version of
+ * this is unchecked, dev-only tooling). */
+export async function advanceMyStoreOrderStatus(
+  userId: string,
+  storeOrderId: string,
+  toStatus: 'CONFIRMED' | 'PREPARING' | 'READY_FOR_PICKUP',
+) {
+  const order = await prisma.order.findUnique({ where: { id: storeOrderId } });
+  if (!order) throw new NotFoundError('Order');
+  await requireManagedBusiness(userId, order.businessId);
+  await advanceStoreOrderStatus(storeOrderId, toStatus);
+  return getManagerOrderDetail(userId, storeOrderId);
+}
+
+/** A store rejecting its own order — distinct from the customer's whole-
+ * master-order cancel (spec §26's "Accept/reject orders"). Only the
+ * rejecting store's line is cancelled; sibling stores in the same master
+ * order are unaffected, matching the "never see another store's order
+ * details" isolation rule. */
+export async function rejectStoreOrder(userId: string, storeOrderId: string, reason: string) {
+  const order = await prisma.order.findUnique({ where: { id: storeOrderId }, include: { business: true } });
+  if (!order) throw new NotFoundError('Order');
+  await requireManagedBusiness(userId, order.businessId);
+  assertValidOrderTransition(order.status, 'CANCELLED');
+
+  const now = new Date();
+  await prisma.$transaction([
+    prisma.order.update({ where: { id: storeOrderId }, data: { status: 'CANCELLED', cancelledAt: now, cancelReason: reason } }),
+    prisma.orderStatusEvent.create({ data: { orderId: storeOrderId, status: 'CANCELLED', changedByUserId: userId } }),
+  ]);
+  await recordAudit({ actorUserId: userId, action: 'STORE_ORDER_REJECTED', entityType: 'Order', entityId: storeOrderId, metadata: { reason } });
+
+  const masterOrder = await prisma.masterOrder.findUniqueOrThrow({ where: { id: order.masterOrderId }, include: { customer: true } });
+  await createNotification({
+    userId: masterOrder.customer.userId,
+    type: 'ORDER_CANCELLED',
+    title: 'Part of your order was cancelled',
+    body: `${order.business.name} could not fulfil order ${order.orderNumber}: ${reason}`,
+    data: { masterOrderId: order.masterOrderId, storeOrderId },
+  });
+
+  const updated = await getMasterOrderOrThrow(order.masterOrderId);
+  await broadcastStatus(updated);
+  return getManagerOrderDetail(userId, storeOrderId);
+}
+
+// ── System admin: global master-order monitoring (spec §24) ─────────────
+
+export async function listAdminMasterOrders() {
+  const orders = await prisma.masterOrder.findMany({ orderBy: { placedAt: 'desc' }, take: 200 });
+  const full = await Promise.all(orders.map((o) => getMasterOrderOrThrow(o.id)));
+  return full.map(mapMasterOrderToSummary);
+}
+
+export async function getAdminMasterOrderDetail(masterOrderId: string) {
+  return mapMasterOrderToDto(await getMasterOrderOrThrow(masterOrderId));
 }

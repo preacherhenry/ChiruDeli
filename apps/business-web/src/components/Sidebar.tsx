@@ -2,17 +2,20 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { LayoutDashboard, ClipboardList, Package, Store, TrendingUp, Bell, LogOut } from 'lucide-react';
+import { LayoutDashboard, ClipboardList, Package, Tag, Store, Clock, TrendingUp, Star, Bell, LogOut } from 'lucide-react';
 import { useLogout } from '@chirudeli/api-client';
 import { Logo } from './Logo';
 import { useSessionStore } from '../state/sessionStore';
 
 const NAV = [
-  { href: '/', label: 'Overview', icon: LayoutDashboard },
+  { href: '/', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/orders', label: 'Orders', icon: ClipboardList },
   { href: '/products', label: 'Products', icon: Package },
-  { href: '/profile', label: 'Business Profile', icon: Store },
+  { href: '/categories', label: 'Categories', icon: Tag },
+  { href: '/profile', label: 'Store Profile', icon: Store },
+  { href: '/hours', label: 'Opening Hours', icon: Clock },
   { href: '/sales', label: 'Sales', icon: TrendingUp },
+  { href: '/reviews', label: 'Reviews', icon: Star },
   { href: '/notifications', label: 'Notifications', icon: Bell },
 ];
 

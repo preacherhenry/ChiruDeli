@@ -12,9 +12,9 @@ datasource db {
 
 enum UserRole {
   CUSTOMER
-  BUSINESS_OWNER
+  STORE_MANAGER
   RIDER
-  ADMIN
+  SYSTEM_ADMIN
 }
 
 enum AccountStatus {
@@ -29,11 +29,19 @@ enum ApprovalStatus {
   REJECTED
 }
 
+/// Store approval/lifecycle status. Deliberately separate from `isActivated`
+/// (Business, below) — a store can be APPROVED but not yet activated
+/// (onboarding incomplete), and customer visibility requires both.
 enum BusinessStatus {
-  PENDING
+  DRAFT
+  SUBMITTED
+  PENDING_APPROVAL
+  UNDER_REVIEW
   APPROVED
   REJECTED
+  RESUBMISSION
   SUSPENDED
+  DEACTIVATED
 }
 
 enum StoreState {
@@ -145,17 +153,11 @@ enum NotificationType {
   NEW_DELIVERY_REQUEST
   DELIVERY_INSTRUCTIONS_UPDATED
   ACCOUNT_STATUS_CHANGED
-}
-
-enum BusinessCategorySlug {
-  FOOD
-  GROCERIES
-  PHARMACY
-  ELECTRONICS
-  STATIONERY
-  HOUSEHOLD
-  CLOTHING
-  OTHER
+  STORE_APPROVED
+  STORE_REJECTED
+  STORE_CHANGES_REQUESTED
+  STORE_SUSPENDED
+  STORE_REACTIVATED
 }
 
 // ── Identity & access ────────────────────────────────────────────────────
@@ -174,7 +176,7 @@ model User {
   customer      Customer?
   rider         Rider?
   adminUser     AdminUser?
-  businesses    Business[]     @relation("BusinessOwner")
+  storeManager  StoreManager?
   addresses     Address[]
   notifications Notification[]
   auditLogs     AuditLog[]     @relation("AuditActor")
@@ -224,44 +226,102 @@ model AdminUser {
   twoFactorEnabled Boolean @default(false)
 }
 
+/// Personal profile for a STORE_MANAGER user — parallel to Customer/Rider.
+/// A manager's actual store access is via StoreManagerAssignment, not a
+/// direct FK here, so the data model already supports one manager running
+/// several stores or several managers sharing one store.
+model StoreManager {
+  id              String   @id @default(uuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id])
+  fullName        String
+  profilePhotoUrl String?
+  nationalIdInfo  String?
+  createdAt       DateTime @default(now())
+
+  assignments StoreManagerAssignment[]
+}
+
 // ── Businesses & catalog ─────────────────────────────────────────────────
 
-model BusinessCategory {
-  id        String               @id @default(uuid())
-  name      String
-  slug      BusinessCategorySlug @unique
-  icon      String
-  sortOrder Int                  @default(0)
+/// System-admin-managed store class (Restaurant, Pharmacy, Hardware, ...).
+/// Deliberately data, not an enum — the admin can create/edit/deactivate
+/// classes from the dashboard without a code change or deploy.
+model StoreClass {
+  id            String   @id @default(uuid())
+  name          String
+  slug          String   @unique
+  description   String   @default("")
+  icon          String?
+  coverImageUrl String?
+  isActive      Boolean  @default(true)
+  /// Independent of isActive — an active class can still be hidden from the
+  /// customer app while stores are still being onboarded into it.
+  isVisible     Boolean  @default(true)
+  sortOrder     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  businesses Business[]
+  requiredDocuments StoreClassDocumentRequirement[]
+  businesses        Business[]
+}
+
+/// Admin-defined document requirement for a store class — a free-text
+/// label, not a hardcoded document-type enum, so "Pharmacy Licence" or any
+/// future document type never needs a code change.
+model StoreClassDocumentRequirement {
+  id            String     @id @default(uuid())
+  storeClassId  String
+  storeClass    StoreClass @relation(fields: [storeClassId], references: [id])
+  documentLabel String
+  isRequired    Boolean    @default(true)
+  sortOrder     Int        @default(0)
+
+  storeDocuments StoreDocument[]
+
+  @@index([storeClassId])
 }
 
 model Business {
-  id                         String          @id @default(uuid())
-  ownerId                    String
-  owner                      User            @relation("BusinessOwner", fields: [ownerId], references: [id])
-  name                       String
-  slug                       String          @unique
-  categoryId                 String
-  category                   BusinessCategory @relation(fields: [categoryId], references: [id])
-  description                String          @default("")
-  logoUrl                    String?
-  coverImageUrl              String?
-  status                     BusinessStatus  @default(PENDING)
-  storeState                 StoreState      @default(OPEN)
-  latitude                   Float
-  longitude                  Float
-  address                    String
-  openingHours               Json
-  zoneId                     String?
-  zone                       DeliveryZone?   @relation(fields: [zoneId], references: [id])
-  commissionOverridePercent  Decimal?        @db.Decimal(5, 2)
-  ratingAvg                  Float           @default(0)
-  ratingCount                Int             @default(0)
-  createdAt                  DateTime        @default(now())
-  approvedAt                 DateTime?
-  approvedById               String?
+  id           String     @id @default(uuid())
+  name         String
+  slug         String     @unique
+  storeClassId String
+  storeClass   StoreClass @relation(fields: [storeClassId], references: [id])
+  description  String     @default("")
+  logoUrl      String?
+  coverImageUrl String?
+  phone         String?
+  email         String?
+  registrationNumber String?
+  taxId              String?
 
+  status      BusinessStatus @default(DRAFT)
+  /// Flips true via the "Activate Store" action once onboarding is
+  /// complete — kept separate from `status` because customer visibility
+  /// needs "approved AND activated", two independent facts (spec §9/§10).
+  isActivated Boolean        @default(false)
+  rejectionReason String?
+  storeState  StoreState     @default(OPEN)
+
+  latitude     Float
+  longitude    Float
+  address      String
+  openingHours Json
+  prepTimeMinutes Int @default(20)
+  zoneId       String?
+  zone         DeliveryZone? @relation(fields: [zoneId], references: [id])
+  commissionOverridePercent Decimal? @db.Decimal(5, 2)
+  ratingAvg    Float    @default(0)
+  ratingCount  Int      @default(0)
+  createdAt    DateTime @default(now())
+  submittedAt  DateTime?
+  approvedAt   DateTime?
+  approvedById String?
+  activatedAt  DateTime?
+
+  managers          StoreManagerAssignment[]
+  documents         StoreDocument[]
   productCategories ProductCategory[]
   products          Product[]
   orders            Order[]
@@ -269,8 +329,49 @@ model Business {
   promotions        Promotion[]
   favoritedBy       FavoriteBusiness[]
 
-  @@index([categoryId])
+  @@index([storeClassId])
   @@index([status])
+}
+
+/// Join table between StoreManager and Business — a manager only ever sees
+/// stores they're assigned to (enforced server-side via requireManagedBusiness,
+/// never trusting a client-supplied store id). Modeled many-to-many from day
+/// one even though today's flows create exactly one assignment per store.
+model StoreManagerAssignment {
+  id             String       @id @default(uuid())
+  businessId     String
+  business       Business     @relation(fields: [businessId], references: [id])
+  storeManagerId String
+  storeManager   StoreManager @relation(fields: [storeManagerId], references: [id])
+  isPrimary      Boolean      @default(true)
+  assignedAt     DateTime     @default(now())
+
+  @@unique([businessId, storeManagerId])
+  @@index([storeManagerId])
+  @@index([businessId])
+}
+
+/// A document uploaded against a store's registration — either satisfying a
+/// specific StoreClassDocumentRequirement or an ad hoc upload (requirementId
+/// null). File bytes live behind the DocumentStorageProvider interface
+/// (lib/documentStorage.ts); `fileData` is provider-opaque storage content,
+/// not necessarily a raw byte string forever.
+model StoreDocument {
+  id            String                          @id @default(uuid())
+  businessId    String
+  business      Business                        @relation(fields: [businessId], references: [id])
+  requirementId String?
+  requirement   StoreClassDocumentRequirement?   @relation(fields: [requirementId], references: [id])
+  label         String
+  fileData      String
+  mimeType      String
+  status        DocumentStatus                  @default(PENDING)
+  reviewNote    String?
+  uploadedAt    DateTime                        @default(now())
+  reviewedAt    DateTime?
+  reviewedById  String?
+
+  @@index([businessId])
 }
 
 model ProductCategory {

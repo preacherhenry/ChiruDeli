@@ -12,8 +12,8 @@ ChiruDeli/
     api/                 Fastify + TypeScript backend (REST + Socket.io)
     customer-mobile/      Expo/React Native — fully implemented
     rider-mobile/         Expo/React Native — nav shell + placeholder screens
-    business-web/         Next.js — nav shell + placeholder screens
-    admin-web/             Next.js — nav shell + placeholder screens
+    business-web/         Next.js — store registration + manager dashboard, fully wired
+    admin-web/             Next.js — store classes/approvals/managers + core admin, fully wired
   packages/
     design-tokens/         colors, type scale, spacing, radii, shadows, brand mark
     shared-types/           Zod schemas + enums — single source of truth for DTOs
@@ -41,8 +41,18 @@ fetch calls or duplicate validation rules.
   (delivery zones, fee config, notifications, audit log).
 - **Auth**: JWT access (short-lived) + refresh (long-lived) tokens,
   `bcryptjs` password hashing. Customers can log in with phone+password or
-  phone+OTP; business/rider/admin use phone+password. `AdminUser` has
+  phone+OTP; store managers/rider/admin use phone+password. `AdminUser` has
   `twoFactorSecret`/`twoFactorEnabled` columns reserved for TOTP 2FA.
+- **RBAC**: `UserRole` is `CUSTOMER | STORE_MANAGER | RIDER | SYSTEM_ADMIN`.
+  Every route enforces its role server-side via `requireRole(...)`
+  (`middleware/authenticate.ts`) — a `STORE_MANAGER` hitting an admin-only
+  route gets a real 403, not just a hidden UI button. Store-scoped routes go
+  one step further: `requireManagedBusiness(userId, businessId)`
+  (`lib/storeAccess.ts`) verifies the authenticated manager actually has a
+  `StoreManagerAssignment` for that business before returning anything —
+  a client-supplied `businessId` is never trusted on its own. "My store"
+  endpoints (`/manager/*`) don't even accept a business id from the client;
+  they resolve it server-side via `getManagedBusinessId(userId)`.
 - **Real-time**: Socket.io, attached to the same HTTP server Fastify uses.
   Rooms: `order:{orderId}` (status + rider location, joined by customer,
   business, assigned rider), `user:{userId}` (personal notifications),
@@ -110,6 +120,73 @@ what allows the dropoff stop to be completed at all.
 single rider rating on the `MasterOrder` itself — the rider handled every
 pickup and the final delivery regardless of how many stores were involved,
 so there's no sense rating them per-store.
+
+### Store classes, approval workflow & RBAC
+
+**Store classes are data, not an enum.** `StoreClass` (Restaurant, Pharmacy,
+Hardware, ...) is a Prisma model the System Administrator manages entirely
+from `admin-web` (`/store-classes`) — create/edit/deactivate/reorder, no code
+change or deploy required. Each class owns its own
+`StoreClassDocumentRequirement[]` (free-text labels like "Pharmacy Licence",
+not a hardcoded document-type enum) — the store registration form
+(`business-web`'s `/register`) renders upload fields dynamically from
+whichever class the manager picks.
+
+**Registration → approval → onboarding → activation** (`Business.status`):
+
+```
+DRAFT → SUBMITTED → PENDING_APPROVAL → UNDER_REVIEW → APPROVED
+                            ↓ (admin)              ↓ (admin)
+                        REJECTED              RESUBMISSION → PENDING_APPROVAL
+APPROVED → SUSPENDED (admin, reversible)
+APPROVED → DEACTIVATED (admin, terminal)
+```
+
+`POST /stores/register` creates a `User(STORE_MANAGER)` + `StoreManager`
+profile + `Business(PENDING_APPROVAL)` + a `StoreManagerAssignment` in one
+transaction — collecting personal info, store info, and store class in a
+single submission (spec §3). The admin's review screen
+(`admin-web`'s `/businesses/:id`) shows store info, the manager, and every
+uploaded document with per-document approve/reject; `approve`/`reject`/
+`request-changes` are only valid from `PENDING_APPROVAL`/`UNDER_REVIEW`/
+`RESUBMISSION`, enforced server-side (`orders.service.ts`-style status guard
+in `businesses.service.ts`).
+
+**`isActivated` is deliberately separate from `status`** — a store can be
+`APPROVED` but not yet activated. Customer visibility requires both
+(`status === 'APPROVED' && isActivated`), matching spec §9/§10's "Approved
+AND Active AND Not Suspended" rule with two independent facts instead of one
+linear status. `POST /manager/store/activate` flips `isActivated` only once
+`computeOnboarding()` reports every step complete: profile filled in,
+opening hours set, at least one product category, at least one product,
+at least one priced+available product, and every *required* document
+`APPROVED` (spec §28's 7-step checklist, computed live — no stored step
+number to drift out of sync).
+
+**Suspension always wins.** `storeState` (`OPEN`/`PAUSED`) is still the
+manager's own real-time "accepting orders" toggle, completely independent of
+admin suspension — `PATCH /manager/store/open-status` rejects with 409 if
+`status` is `SUSPENDED`/`DEACTIVATED`, so a suspended manager can't reopen
+their own store (spec §29).
+
+**Notifications + audit**: every status change
+(`STORE_APPROVED`/`STORE_REJECTED`/`STORE_CHANGES_REQUESTED`/
+`STORE_SUSPENDED`/`STORE_REACTIVATED`) fires a `createNotification()` to the
+store's primary manager and a `recordAudit()` row, alongside the existing
+order/business audit actions.
+
+**Documents**: uploaded files are base64 content behind a
+`DocumentStorageProvider` interface (`lib/documentStorage.ts`, same
+swappable-provider pattern as `PaymentProvider`/`SmsProvider`) — the default
+`PostgresBase64DocumentProvider` stores content directly on `StoreDocument`
+rows so nothing is lost on a Render redeploy, with a one-file swap to real
+object storage (S3/R2) once that's set up.
+
+**Multiple managers per store, from day one**: `StoreManagerAssignment` is a
+join table between `StoreManager` and `Business` (`isPrimary` flag), not a
+direct `Business.ownerId` FK — today's flows create exactly one assignment
+per store, but the schema already supports several managers sharing a store
+or one manager running several, per spec §20, without another migration.
 
 ### Delivery fee & commission engine
 
@@ -240,29 +317,43 @@ MainNavigator (once APPROVED):
     → DeliveryNavigation → DeliveryConfirmation (PIN entry)
 ```
 
-### Business (`apps/business-web`) — nav shell only this session
+### Business (`apps/business-web`) — fully wired
 
 ```
-Auth: Login → Registration → ApprovalPending
+Auth: Login → Register (personal + store info + dynamic document upload) → ApprovalPending
 Dashboard (sidebar layout):
-  Overview | Orders → OrderDetails | Products → Add/Edit Product
-  Business Profile | Sales | Notifications
+  Dashboard (stats + onboarding checklist + Activate Store)
+  Orders → OrderDetails (accept/prepare/ready/reject)
+  Products → Add/Edit Product | Categories
+  Store Profile (+ open/closed toggle) | Opening Hours
+  Sales | Reviews | Notifications
 ```
 
-### Admin (`apps/admin-web`) — nav shell only this session
+### Admin (`apps/admin-web`) — core sections fully wired
 
 ```
 Login
 Dashboard (sidebar layout):
-  Overview | Businesses → Approval | Riders → Approval | Customers
-  Orders | Live Deliveries | Products | Delivery Zones | Delivery Fees
+  Overview (platform stats)
+  Store Approvals → StoreDetail (review, approve/reject/request changes,
+    per-document approve/reject)
+  Stores → StoreDetail (search/filter, suspend/reactivate/deactivate, edit)
+  Store Classes (create/edit/delete, required-documents editor)
+  Store Managers (suspend/reactivate/reset password)
+  Riders → Approval | Customers
+  Orders → OrderDetails (global master-order monitoring)
+  Live Deliveries | Products | Delivery Zones | Delivery Fees
   Commissions | Promotions | Reports | Settings
 ```
+Riders/Customers/Live Deliveries/Products(admin)/Delivery Zones & Fees/
+Commissions/Promotions/Reports/Settings remain placeholder pages — see
+`docs/roadmap.md`.
 
 ## Business rules enforced today
 
-- A business cannot receive orders until `Business.status = APPROVED`
-  (`createOrder` checks this).
+- A business cannot receive orders until `Business.status = APPROVED` AND
+  `isActivated = true` (`computeOrder` in `orders.service.ts` checks both) —
+  see "Store classes, approval workflow & RBAC" above.
 - A business can pause its store (`storeState = PAUSED`) — `createOrder`
   rejects new orders while paused.
 - Products can be marked `isAvailable = false` — checked at order creation,

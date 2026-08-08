@@ -9,22 +9,46 @@ const TOWN_CENTER = { lat: -16.0334, lng: 28.85 };
 async function main() {
   console.log('Seeding ChiruDeli...');
 
-  // ── Business categories ─────────────────────────────────────────────
-  const categories = await Promise.all(
-    [
-      { name: 'Food', slug: 'FOOD' as const, icon: 'utensils', sortOrder: 1 },
-      { name: 'Groceries', slug: 'GROCERIES' as const, icon: 'shopping-cart', sortOrder: 2 },
-      { name: 'Pharmacy', slug: 'PHARMACY' as const, icon: 'pill', sortOrder: 3 },
-      { name: 'Electronics', slug: 'ELECTRONICS' as const, icon: 'smartphone', sortOrder: 4 },
-      { name: 'Stationery', slug: 'STATIONERY' as const, icon: 'book-open', sortOrder: 5 },
-      { name: 'Household', slug: 'HOUSEHOLD' as const, icon: 'home', sortOrder: 6 },
-      { name: 'Clothing', slug: 'CLOTHING' as const, icon: 'shirt', sortOrder: 7 },
-      { name: 'Other', slug: 'OTHER' as const, icon: 'package', sortOrder: 8 },
-    ].map((c) =>
-      prisma.businessCategory.upsert({ where: { slug: c.slug }, update: c, create: c }),
-    ),
-  );
-  const categoryBySlug = Object.fromEntries(categories.map((c) => [c.slug, c]));
+  // ── Store classes (spec §17/§18) — admin-managed data, not an enum ───
+  const storeClassSeeds = [
+    { name: 'Restaurants', slug: 'restaurants', icon: '🍔', sortOrder: 1, docs: [] },
+    { name: 'Groceries', slug: 'groceries', icon: '🛒', sortOrder: 2, docs: [] },
+    {
+      name: 'Pharmacies',
+      slug: 'pharmacies',
+      icon: '💊',
+      sortOrder: 3,
+      docs: ['Business Registration Certificate', 'Pharmacy Licence'],
+    },
+    { name: 'Electronics', slug: 'electronics', icon: '📱', sortOrder: 4, docs: ['Business Registration Certificate'] },
+    { name: 'Stationery', slug: 'stationery', icon: '📚', sortOrder: 5, docs: [] },
+    { name: 'Household', slug: 'household', icon: '🏠', sortOrder: 6, docs: [] },
+    { name: 'Hardware', slug: 'hardware', icon: '🔧', sortOrder: 7, docs: ['Business Registration Certificate'] },
+    { name: 'Butcheries', slug: 'butcheries', icon: '🥩', sortOrder: 8, docs: ['Health/Food Handling Certificate'] },
+    { name: 'Other', slug: 'other', icon: '📦', sortOrder: 9, docs: [] },
+  ];
+
+  const storeClassBySlug: Record<string, { id: string }> = {};
+  for (const sc of storeClassSeeds) {
+    const existing = await prisma.storeClass.findUnique({ where: { slug: sc.slug } });
+    const storeClass = existing
+      ? await prisma.storeClass.update({
+          where: { slug: sc.slug },
+          data: { name: sc.name, icon: sc.icon, sortOrder: sc.sortOrder },
+        })
+      : await prisma.storeClass.create({
+          data: {
+            name: sc.name,
+            slug: sc.slug,
+            icon: sc.icon,
+            sortOrder: sc.sortOrder,
+            requiredDocuments: {
+              create: sc.docs.map((label, i) => ({ documentLabel: label, isRequired: true, sortOrder: i })),
+            },
+          },
+        });
+    storeClassBySlug[sc.slug] = storeClass;
+  }
 
   // ── Delivery zones (spec section 18's example table) ────────────────
   const chirunduTownData = {
@@ -96,18 +120,18 @@ async function main() {
       phone: '+260970000001',
       email: 'admin@chirudeli.zm',
       passwordHash: await hashPassword('Admin123!'),
-      role: 'ADMIN',
+      role: 'SYSTEM_ADMIN',
       adminUser: { create: { fullName: 'Chisenga Mumba', permissionLevel: 'SUPER_ADMIN' } },
     },
   });
 
-  // ── Businesses ────────────────────────────────────────────────────────
+  // ── Approved & activated stores ──────────────────────────────────────
   const businessSeeds = [
     {
-      ownerPhone: '+260971000001',
-      ownerName: 'Thandiwe Banda',
+      managerPhone: '+260971000001',
+      managerName: 'Thandiwe Banda',
       name: 'Chirundu Grill House',
-      categorySlug: 'FOOD',
+      storeClassSlug: 'restaurants',
       description: 'Char-grilled Zambian favourites — nshima, chicken, bream, and cold drinks.',
       lat: TOWN_CENTER.lat + 0.002,
       lng: TOWN_CENTER.lng + 0.001,
@@ -132,10 +156,10 @@ async function main() {
       },
     },
     {
-      ownerPhone: '+260971000002',
-      ownerName: 'Bwalya Mwansa',
+      managerPhone: '+260971000002',
+      managerName: 'Bwalya Mwansa',
       name: 'Zambezi Fresh Groceries',
-      categorySlug: 'GROCERIES',
+      storeClassSlug: 'groceries',
       description: 'Fresh produce and everyday household groceries, restocked daily.',
       lat: TOWN_CENTER.lat - 0.0015,
       lng: TOWN_CENTER.lng + 0.0025,
@@ -158,10 +182,10 @@ async function main() {
       },
     },
     {
-      ownerPhone: '+260971000003',
-      ownerName: 'Natasha Zulu',
+      managerPhone: '+260971000003',
+      managerName: 'Natasha Zulu',
       name: 'Riverside Pharmacy',
-      categorySlug: 'PHARMACY',
+      storeClassSlug: 'pharmacies',
       description: 'Everyday medicines, first aid, and personal care essentials.',
       lat: TOWN_CENTER.lat + 0.001,
       lng: TOWN_CENTER.lng - 0.0015,
@@ -179,10 +203,10 @@ async function main() {
       },
     },
     {
-      ownerPhone: '+260971000004',
-      ownerName: 'Emmanuel Chileshe',
+      managerPhone: '+260971000004',
+      managerName: 'Emmanuel Chileshe',
       name: 'Chirundu Electronics Hub',
-      categorySlug: 'ELECTRONICS',
+      storeClassSlug: 'electronics',
       description: 'Phone accessories, audio gear, and everyday electronics.',
       lat: TOWN_CENTER.lat - 0.0008,
       lng: TOWN_CENTER.lng - 0.0008,
@@ -199,10 +223,10 @@ async function main() {
       },
     },
     {
-      ownerPhone: '+260971000005',
-      ownerName: 'Mercy Sinkala',
+      managerPhone: '+260971000005',
+      managerName: 'Mercy Sinkala',
       name: 'Border Stationers',
-      categorySlug: 'STATIONERY',
+      storeClassSlug: 'stationery',
       description: 'School and office supplies for Chirundu and surrounding areas.',
       lat: TOWN_CENTER.lat + 0.0022,
       lng: TOWN_CENTER.lng - 0.0022,
@@ -219,10 +243,10 @@ async function main() {
       },
     },
     {
-      ownerPhone: '+260971000006',
-      ownerName: 'Joseph Mulenga',
+      managerPhone: '+260971000006',
+      managerName: 'Joseph Mulenga',
       name: 'Zambezi Home & Household',
-      categorySlug: 'HOUSEHOLD',
+      storeClassSlug: 'household',
       description: 'Cleaning supplies and kitchenware for the home.',
       lat: TOWN_CENTER.lat - 0.0022,
       lng: TOWN_CENTER.lng - 0.0015,
@@ -251,14 +275,16 @@ async function main() {
   };
 
   for (const seed of businessSeeds) {
-    const owner = await prisma.user.upsert({
-      where: { phone: seed.ownerPhone },
+    const managerUser = await prisma.user.upsert({
+      where: { phone: seed.managerPhone },
       update: {},
       create: {
-        phone: seed.ownerPhone,
+        phone: seed.managerPhone,
         passwordHash: await hashPassword('Business123!'),
-        role: 'BUSINESS_OWNER',
+        role: 'STORE_MANAGER',
+        storeManager: { create: { fullName: seed.managerName } },
       },
+      include: { storeManager: true },
     });
 
     const slug = seed.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
@@ -266,20 +292,26 @@ async function main() {
       where: { slug },
       update: {},
       create: {
-        ownerId: owner.id,
         name: seed.name,
         slug,
-        categoryId: categoryBySlug[seed.categorySlug]!.id,
+        storeClassId: storeClassBySlug[seed.storeClassSlug]!.id,
         description: seed.description,
+        phone: seed.managerPhone,
         status: 'APPROVED',
+        isActivated: true,
         storeState: 'OPEN',
         latitude: seed.lat,
         longitude: seed.lng,
         address: `${seed.name}, Chirundu, Zambia`,
         openingHours,
         zoneId: seed.zoneId,
+        submittedAt: new Date(),
         approvedAt: new Date(),
         approvedById: adminUser.id,
+        activatedAt: new Date(),
+        managers: managerUser.storeManager
+          ? { create: { storeManagerId: managerUser.storeManager.id, isPrimary: true } }
+          : undefined,
       },
     });
 
@@ -304,6 +336,43 @@ async function main() {
     }
     console.log(`  ✓ ${seed.name}`);
   }
+
+  // ── One store still awaiting approval — demoes the approval workflow ─
+  const pendingManagerUser = await prisma.user.upsert({
+    where: { phone: '+260971000099' },
+    update: {},
+    create: {
+      phone: '+260971000099',
+      passwordHash: await hashPassword('Business123!'),
+      role: 'STORE_MANAGER',
+      storeManager: { create: { fullName: 'Ruth Sakala' } },
+    },
+    include: { storeManager: true },
+  });
+  const pendingSlug = 'chirundu-hardware-supplies';
+  const existingPending = await prisma.business.findUnique({ where: { slug: pendingSlug } });
+  if (!existingPending) {
+    await prisma.business.create({
+      data: {
+        name: 'Chirundu Hardware Supplies',
+        slug: pendingSlug,
+        storeClassId: storeClassBySlug.hardware!.id,
+        description: 'Building materials, tools, and plumbing supplies.',
+        phone: '+260971000099',
+        status: 'PENDING_APPROVAL',
+        isActivated: false,
+        latitude: TOWN_CENTER.lat + 0.003,
+        longitude: TOWN_CENTER.lng + 0.003,
+        address: 'Chirundu Hardware Supplies, Chirundu, Zambia',
+        openingHours,
+        submittedAt: new Date(),
+        managers: pendingManagerUser.storeManager
+          ? { create: { storeManagerId: pendingManagerUser.storeManager.id, isPrimary: true } }
+          : undefined,
+      },
+    });
+  }
+  console.log('  ✓ Chirundu Hardware Supplies (pending admin approval)');
 
   // ── Riders ────────────────────────────────────────────────────────────
   const riderSeeds = [
@@ -384,10 +453,11 @@ async function main() {
   });
 
   console.log('\nSeed complete. Demo logins:');
-  console.log('  Admin:    +260970000001 / Admin123!');
-  console.log('  Business: +260971000001 / Business123!  (Chirundu Grill House)');
-  console.log('  Rider:    +260975000001 / Rider123!      (Kunda Banda)');
-  console.log('  Customer: +260976543210 / Customer123!   (Mwansa Phiri)');
+  console.log('  Admin:          +260970000001 / Admin123!');
+  console.log('  Store manager:  +260971000001 / Business123!  (Chirundu Grill House)');
+  console.log('  Pending store:  +260971000099 / Business123!  (Chirundu Hardware Supplies, awaiting approval)');
+  console.log('  Rider:          +260975000001 / Rider123!      (Kunda Banda)');
+  console.log('  Customer:       +260976543210 / Customer123!   (Mwansa Phiri)');
 }
 
 main()

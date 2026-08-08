@@ -1,7 +1,7 @@
 import { View, Text, ScrollView, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Bell, ChevronDown, Search as SearchIcon, User, Store } from 'lucide-react-native';
-import { useBusinesses } from '@chirudeli/api-client';
+import { useBusinesses, useStoreClasses } from '@chirudeli/api-client';
 import { useAppNavigation } from '../../navigation/useAppNavigation';
 import { useLocationStore } from '../../state/locationStore';
 import { CategoryCard } from '../../components/CategoryCard';
@@ -9,12 +9,12 @@ import { BusinessCard } from '../../components/BusinessCard';
 import { LoadingState } from '../../components/LoadingState';
 import { ErrorState } from '../../components/ErrorState';
 import { EmptyState } from '../../components/EmptyState';
-import { CATEGORIES } from '../../lib/categories';
 
 export function HomeScreen() {
   const navigation = useAppNavigation();
   const { coords, label } = useLocationStore();
   const businesses = useBusinesses({ lat: coords?.latitude, lng: coords?.longitude });
+  const storeClasses = useStoreClasses();
 
   return (
     <SafeAreaView className="flex-1 bg-background" edges={['top', 'left', 'right']}>
@@ -48,10 +48,10 @@ export function HomeScreen() {
         </Pressable>
 
         <View className="mb-6 flex-row flex-wrap justify-between gap-y-4 px-4">
-          {CATEGORIES.map((c) => (
+          {(storeClasses.data ?? []).map((c) => (
             <CategoryCard
-              key={c.slug}
-              slug={c.slug}
+              key={c.id}
+              icon={c.icon}
               name={c.name}
               onPress={() => navigation.navigate('BusinessListing', { categorySlug: c.slug })}
             />

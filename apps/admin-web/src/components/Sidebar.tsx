@@ -5,6 +5,9 @@ import { usePathname, useRouter } from 'next/navigation';
 import {
   LayoutDashboard,
   Store,
+  ShieldCheck,
+  LayoutGrid,
+  UserCog,
   Bike,
   Users,
   ClipboardList,
@@ -24,7 +27,10 @@ import { useSessionStore } from '../state/sessionStore';
 
 const NAV = [
   { href: '/', label: 'Overview', icon: LayoutDashboard },
-  { href: '/businesses', label: 'Businesses', icon: Store },
+  { href: '/businesses/approval', label: 'Store Approvals', icon: ShieldCheck },
+  { href: '/businesses', label: 'Stores', icon: Store },
+  { href: '/store-classes', label: 'Store Classes', icon: LayoutGrid },
+  { href: '/store-managers', label: 'Store Managers', icon: UserCog },
   { href: '/riders', label: 'Riders', icon: Bike },
   { href: '/customers', label: 'Customers', icon: Users },
   { href: '/orders', label: 'Orders', icon: ClipboardList },

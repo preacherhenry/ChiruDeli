@@ -28,7 +28,7 @@ export function BusinessCard({ business, onPress }: { business: BusinessSummary;
         <Text className="font-body-semibold text-base text-neutral-900" numberOfLines={1}>
           {business.name}
         </Text>
-        <Text className="font-body text-xs text-neutral-500">{business.category.name}</Text>
+        <Text className="font-body text-xs text-neutral-500">{business.storeClass.name}</Text>
         <View className="mt-1 flex-row items-center gap-3">
           <View className="flex-row items-center gap-1">
             <Star size={13} color="#DB8B1A" fill="#DB8B1A" />

@@ -21,6 +21,37 @@ import type {
   PromoValidationResult,
   Address,
   CreateAddressInput,
+  StoreClass,
+  CreateStoreClassInput,
+  UpdateStoreClassInput,
+  RegisterStoreInput,
+  RegisterStoreResult,
+  MyStore,
+  UpdateStoreProfileInput,
+  OpeningHours,
+  ManagerDashboardStats,
+  StoreDocument,
+  UploadStoreDocumentInput,
+  AdminBusinessListItem,
+  AdminBusinessDetail,
+  RejectStoreInput,
+  RequestStoreChangesInput,
+  SuspendStoreInput,
+  AdminUpdateStoreInput,
+  ReviewStoreDocumentInput,
+  AdminStoreManagerListItem,
+  AdminStoreManagerDetail,
+  ReassignStoreManagerInput,
+  ResetStoreManagerPasswordResult,
+  ProductCategory,
+  CreateProductCategoryInput,
+  UpdateProductCategoryInput,
+  UpsertProductInput,
+  ManagerOrder,
+  RejectStoreOrderInput,
+  AdvanceStoreOrderInput,
+  PlatformStats,
+  ManagerReview,
 } from '@chirudeli/shared-types';
 import { ApiError } from './error';
 import type { TokenStorage } from './storage';
@@ -214,5 +245,104 @@ export class ApiClient {
         method: 'POST',
         body: { code, subtotal, businessIds },
       }),
+  };
+
+  storeClasses = {
+    list: () => this.request<StoreClass[]>('/store-classes'),
+  };
+
+  stores = {
+    register: (input: RegisterStoreInput) =>
+      this.request<RegisterStoreResult>('/stores/register', { method: 'POST', body: input }),
+  };
+
+  manager = {
+    getStore: () => this.request<MyStore>('/manager/store'),
+    updateProfile: (input: UpdateStoreProfileInput) =>
+      this.request<MyStore>('/manager/store/profile', { method: 'PATCH', body: input }),
+    updateHours: (input: OpeningHours) =>
+      this.request<MyStore>('/manager/store/hours', { method: 'PATCH', body: input }),
+    setOpenStatus: (storeState: 'OPEN' | 'PAUSED') =>
+      this.request<MyStore>('/manager/store/open-status', { method: 'PATCH', body: { storeState } }),
+    activate: () => this.request<MyStore>('/manager/store/activate', { method: 'POST' }),
+    dashboard: () => this.request<ManagerDashboardStats>('/manager/dashboard'),
+    reviews: () => this.request<ManagerReview[]>('/manager/store/reviews'),
+    uploadDocument: (input: UploadStoreDocumentInput) =>
+      this.request<StoreDocument>('/manager/store/documents', { method: 'POST', body: input }),
+
+    productCategories: {
+      list: () => this.request<ProductCategory[]>('/manager/product-categories'),
+      create: (input: CreateProductCategoryInput) =>
+        this.request<ProductCategory>('/manager/product-categories', { method: 'POST', body: input }),
+      update: (id: string, input: UpdateProductCategoryInput) =>
+        this.request<ProductCategory>(`/manager/product-categories/${id}`, { method: 'PATCH', body: input }),
+      delete: (id: string) => this.request<void>(`/manager/product-categories/${id}`, { method: 'DELETE' }),
+    },
+
+    products: {
+      list: () => this.request<Product[]>('/manager/products'),
+      create: (input: UpsertProductInput) => this.request<Product>('/manager/products', { method: 'POST', body: input }),
+      update: (id: string, input: UpsertProductInput) =>
+        this.request<Product>(`/manager/products/${id}`, { method: 'PATCH', body: input }),
+      delete: (id: string) => this.request<void>(`/manager/products/${id}`, { method: 'DELETE' }),
+    },
+
+    orders: {
+      list: () => this.request<ManagerOrder[]>('/manager/orders'),
+      get: (id: string) => this.request<ManagerOrder>(`/manager/orders/${id}`),
+      reject: (id: string, input: RejectStoreOrderInput) =>
+        this.request<ManagerOrder>(`/manager/orders/${id}/reject`, { method: 'POST', body: input }),
+      advance: (id: string, input: AdvanceStoreOrderInput) =>
+        this.request<ManagerOrder>(`/manager/orders/${id}/advance`, { method: 'POST', body: input }),
+    },
+  };
+
+  admin = {
+    stats: () => this.request<PlatformStats>('/admin/stats'),
+
+    storeClasses: {
+      list: () => this.request<StoreClass[]>('/admin/store-classes'),
+      create: (input: CreateStoreClassInput) =>
+        this.request<StoreClass>('/admin/store-classes', { method: 'POST', body: input }),
+      update: (id: string, input: UpdateStoreClassInput) =>
+        this.request<StoreClass>(`/admin/store-classes/${id}`, { method: 'PATCH', body: input }),
+      delete: (id: string) => this.request<void>(`/admin/store-classes/${id}`, { method: 'DELETE' }),
+    },
+
+    stores: {
+      list: (filters: { status?: string; storeClassId?: string; search?: string } = {}) =>
+        this.request<AdminBusinessListItem[]>('/admin/stores', { query: filters }),
+      get: (id: string) => this.request<AdminBusinessDetail>(`/admin/stores/${id}`),
+      update: (id: string, input: AdminUpdateStoreInput) =>
+        this.request<AdminBusinessDetail>(`/admin/stores/${id}`, { method: 'PATCH', body: input }),
+      approve: (id: string) => this.request<AdminBusinessDetail>(`/admin/stores/${id}/approve`, { method: 'POST' }),
+      reject: (id: string, input: RejectStoreInput) =>
+        this.request<AdminBusinessDetail>(`/admin/stores/${id}/reject`, { method: 'POST', body: input }),
+      requestChanges: (id: string, input: RequestStoreChangesInput) =>
+        this.request<AdminBusinessDetail>(`/admin/stores/${id}/request-changes`, { method: 'POST', body: input }),
+      suspend: (id: string, input: SuspendStoreInput) =>
+        this.request<AdminBusinessDetail>(`/admin/stores/${id}/suspend`, { method: 'POST', body: input }),
+      reactivate: (id: string) => this.request<AdminBusinessDetail>(`/admin/stores/${id}/reactivate`, { method: 'POST' }),
+      deactivate: (id: string) => this.request<AdminBusinessDetail>(`/admin/stores/${id}/deactivate`, { method: 'POST' }),
+      reviewDocument: (id: string, docId: string, input: ReviewStoreDocumentInput) =>
+        this.request<StoreDocument>(`/admin/stores/${id}/documents/${docId}/review`, { method: 'POST', body: input }),
+    },
+
+    storeManagers: {
+      list: () => this.request<AdminStoreManagerListItem[]>('/admin/store-managers'),
+      get: (id: string) => this.request<AdminStoreManagerDetail>(`/admin/store-managers/${id}`),
+      suspend: (id: string) => this.request<AdminStoreManagerDetail>(`/admin/store-managers/${id}/suspend`, { method: 'POST' }),
+      reactivate: (id: string) =>
+        this.request<AdminStoreManagerDetail>(`/admin/store-managers/${id}/reactivate`, { method: 'POST' }),
+      resetPassword: (id: string) =>
+        this.request<ResetStoreManagerPasswordResult>(`/admin/store-managers/${id}/reset-password`, { method: 'POST' }),
+      reassign: (id: string, input: ReassignStoreManagerInput) =>
+        this.request<AdminStoreManagerDetail>(`/admin/store-managers/${id}/reassign`, { method: 'POST', body: input }),
+    },
+
+    masterOrders: {
+      list: () => this.request<MasterOrderSummary[]>('/admin/master-orders'),
+      get: (id: string) => this.request<MasterOrder>(`/admin/master-orders/${id}`),
+    },
   };
 }
